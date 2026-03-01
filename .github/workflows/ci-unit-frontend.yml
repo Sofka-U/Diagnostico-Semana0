@@ -32,11 +32,11 @@ jobs:
         run: npm run test -- --coverage
 
       - name: Check frontend coverage
-        run: node ../.github/scripts/check-coverage.js Frontend/coverage 70
+        run: node ../.github/scripts/check-coverage.js coverage 70
 
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: frontend-test-results
-          path: Frontend/coverage/
+          path: coverage/
