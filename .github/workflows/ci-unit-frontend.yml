@@ -29,7 +29,10 @@ jobs:
           npm install --no-save @rollup/rollup-linux-x64-gnu@4.57.1
 
       - name: Run unit tests
-        run: npm run test
+        run: npm run test -- --coverage
+
+      - name: Check frontend coverage
+        run: node ../.github/scripts/check-coverage.js Frontend/coverage 70
 
       - name: Upload test results
         if: always()

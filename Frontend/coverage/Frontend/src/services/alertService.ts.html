@@ -3,7 +3,7 @@
 <html lang="en">
 
 <head>
-    <title>Code coverage report for Frontend/src/services/usuarioService.ts</title>
+    <title>Code coverage report for Frontend/src/services/alertService.ts</title>
     <meta charset="utf-8" />
     <link rel="stylesheet" href="../../../prettify.css" />
     <link rel="stylesheet" href="../../../base.css" />
@@ -19,34 +19,34 @@
 <body>
 <div class='wrapper'>
     <div class='pad1'>
-        <h1><a href="../../../index.html">All files</a> / <a href="index.html">Frontend/src/services</a> usuarioService.ts</h1>
+        <h1><a href="../../../index.html">All files</a> / <a href="index.html">Frontend/src/services</a> alertService.ts</h1>
         <div class='clearfix'>
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">100% </span>
+                <span class="strong">77.41% </span>
                 <span class="quiet">Statements</span>
-                <span class='fraction'>29/29</span>
+                <span class='fraction'>24/31</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
                 <span class="strong">100% </span>
                 <span class="quiet">Branches</span>
-                <span class='fraction'>3/3</span>
+                <span class='fraction'>1/1</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">100% </span>
+                <span class="strong">50% </span>
                 <span class="quiet">Functions</span>
-                <span class='fraction'>3/3</span>
+                <span class='fraction'>1/2</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">100% </span>
+                <span class="strong">77.41% </span>
                 <span class="quiet">Lines</span>
-                <span class='fraction'>29/29</span>
+                <span class='fraction'>24/31</span>
             </div>
         
             
@@ -61,7 +61,7 @@
             </div>
         </template>
     </div>
-    <div class='status-line high'></div>
+    <div class='status-line medium'></div>
     <pre><table class="coverage">
 <tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
 <a name='L2'></a><a href='#L2'>2</a>
@@ -92,15 +92,9 @@
 <a name='L27'></a><a href='#L27'>27</a>
 <a name='L28'></a><a href='#L28'>28</a>
 <a name='L29'></a><a href='#L29'>29</a>
-<a name='L30'></a><a href='#L30'>30</a></td><td class="line-coverage quiet"><span class="cline-any cline-yes">1x</span>
-<span class="cline-any cline-yes">1x</span>
-<span class="cline-any cline-yes">1x</span>
-<span class="cline-any cline-yes">1x</span>
-<span class="cline-any cline-yes">1x</span>
-<span class="cline-any cline-yes">1x</span>
-<span class="cline-any cline-yes">1x</span>
-<span class="cline-any cline-yes">2x</span>
-<span class="cline-any cline-yes">2x</span>
+<a name='L30'></a><a href='#L30'>30</a>
+<a name='L31'></a><a href='#L31'>31</a>
+<a name='L32'></a><a href='#L32'>32</a></td><td class="line-coverage quiet"><span class="cline-any cline-yes">1x</span>
 <span class="cline-any cline-yes">1x</span>
 <span class="cline-any cline-yes">1x</span>
 <span class="cline-any cline-yes">1x</span>
@@ -121,35 +115,47 @@
 <span class="cline-any cline-yes">1x</span>
 <span class="cline-any cline-yes">1x</span>
 <span class="cline-any cline-yes">1x</span>
-<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">import { userApi } from './api';
-import { Usuario } from '../interfaces';
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">import Swal from 'sweetalert2';
+import withReactContent from 'sweetalert2-react-content';
 &nbsp;
-/**
- * Retrieve all users from the usuario-service.
- */
-export const getUsers = async (): Promise&lt;Usuario[]&gt; =&gt; {
-    return await userApi.get&lt;Usuario[]&gt;('/users');
+export type AlertService = {
+  success: (title: string, text?: string) =&gt; Promise&lt;void&gt;;
+  error: (title: string, text?: string) =&gt; Promise&lt;void&gt;;
+  info?: (title: string, text?: string) =&gt; Promise&lt;void&gt;;
 };
 &nbsp;
-/**
- * Retrieve a user by email. The email is URL-encoded.
- * @param email user's email address
- */
-export const getUserByEmail = async (email: string): Promise&lt;Usuario&gt; =&gt; {
-    return await userApi.get&lt;Usuario&gt;(`/users/${encodeURIComponent(email)}`);
+const MySwal = withReactContent(Swal);
+&nbsp;
+export const defaultAlertService: AlertService = {
+  success: async (title: string, text?: string) =&gt; {
+    await MySwal.fire({
+      title,
+      text,
+      icon: 'success',
+      confirmButtonText: 'Aceptar',
+    });
+  },
+  error: <span class="fstat-no" title="function not covered" >async (title: string, text?: string) =&gt; {</span>
+<span class="cstat-no" title="statement not covered" >    await MySwal.fire({</span>
+<span class="cstat-no" title="statement not covered" >      title,</span>
+<span class="cstat-no" title="statement not covered" >      text,</span>
+<span class="cstat-no" title="statement not covered" >      icon: 'error',</span>
+<span class="cstat-no" title="statement not covered" >      confirmButtonText: 'Cerrar',</span>
+<span class="cstat-no" title="statement not covered" >    });</span>
+<span class="cstat-no" title="statement not covered" >  },</span>
 };
 &nbsp;
-/**
- * Create a new user in the usuario-service.
- */
-export const addUser = async (payload: {
-    name: string;
-    mail: string;
-    password: string;
-    active: boolean;
-}): Promise&lt;Usuario&gt; =&gt; {
-    return await userApi.post&lt;Usuario&gt;('/users', payload);
-};
+export default defaultAlertService;
 &nbsp;</pre></td></tr></table></pre>
 
                 <div class='push'></div><!-- for sticky footer -->
