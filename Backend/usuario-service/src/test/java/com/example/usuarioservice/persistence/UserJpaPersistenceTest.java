@@ -173,4 +173,3 @@ class UserJpaPersistenceTest {
         verify(jpaRepository, never()).deleteById(userId);
     }
 }
-

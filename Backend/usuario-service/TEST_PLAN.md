@@ -8,7 +8,7 @@
 | **Fecha** | 26 de febrero de 2026 |
 | **Microservicio** | usuario-service |
 | **Cobertura actual (JaCoCo)** | 49% (1.464/2.907 instrucciones) |
-| **Meta de cobertura** | ≥80% |
+| **Meta de cobertura** | ≥70% |
 | **Instrucciones a cubrir** | ~893 adicionales |
 
 ### Resumen de Estado Actual
@@ -37,7 +37,7 @@ Fecha: 2026-03-01
 ## 1. Overview
 - Microservicio: `usuario-service`
 - Cobertura actual (JaCoCo): 82% instrucciones, 65% branches (informe local)
-- Objetivo inmediato: subir cobertura crítica a ≥80% enfocando paquetes con brechas.
+- Objetivo inmediato: subir cobertura crítica a ≥70% enfocando paquetes con brechas.
 
 Resumen ejecutivo:
 - Paquetes con cobertura baja detectados en JaCoCo:
@@ -123,8 +123,8 @@ Feature: UserRepository JSON persistence
 - Día 1: mapper tests + init/create file tests.
 - Día 2: partialUpdate, writeToFile error path, JPA tests + ejecutar JaCoCo.
 
-## 10. Criterios de éxito
-- Reducir missed instructions en `persistence` y `mapper` hasta llevar cobertura global ≥80%.
+-## 10. Criterios de éxito
+- Reducir missed instructions en `persistence` y `mapper` hasta llevar cobertura global ≥70%.
 - No añadir más tests si cobertura supera 90% (regla del request).
 
 Fin del plan corregido — foco en `persistence` y `mapper` del `usuario-service`.
