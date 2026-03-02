@@ -108,7 +108,7 @@ ESTADO ACTUAL: 🔴 CRÍTICO
 DESPUÉS DE REFACTORIZACIÓN:
 ┌─────────────────────────────────────┐
 │ Puntuación de Salud: 8.5/10        │
-│ Test Coverage: 80%+                │
+│ Test Coverage: 70%+                │
 │ SOLID Score: 4.5/5                │
 │ Code Smells: <3                   │
 │ Criticales: 0                     │
@@ -267,7 +267,7 @@ Sprint 4: Polish + Deployment
 - [ ] UsuarioControllerTest (8 casos)
 - [ ] Persistence tests
 - [ ] Mapper tests
-- [ ] Alcanzar 80% de cobertura
+- [ ] Alcanzar 70% de cobertura
 
 ### FASE 3 - PULIDO (Semana 3)
 - [ ] Logging estructurado (SLF4J)
@@ -302,7 +302,7 @@ Sprint 4: Polish + Deployment
 5. TestContainers para integration tests
 
 ### Calidad
-1. Mantener 80%+ test coverage
+1. Mantener 70%+ test coverage
 2. SonarQube para análisis estático
 3. Code reviews obligatrios
 4. Linting con CheckStyle

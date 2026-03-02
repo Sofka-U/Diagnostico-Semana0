@@ -9,7 +9,7 @@
 
 | Componente | Estado | Test Coverage | Severidad | Esfuerzo Restante |
 |------------|--------|---------------|-----------|----------|
-| **Frontend** | ✅ Refactorizado | 80%+ (15 tests) | 🟢 Baja | 2-4h |
+| **Frontend** | ✅ Refactorizado | 70%+ (15 tests) | 🟢 Baja | 2-4h |
 | **Backend - pedido-service** | ✅ Testeado | 70%+ (34 tests) | 🟡 Media | 8-12h |
 | **Backend - usuario-service** | ⚠️ Parcial | 50%+ (20 tests) | 🔴 Alta | 12-16h |
 | **Infraestructura** | ⚠️ Básica | N/A | 🟡 Media | 6-8h |
@@ -146,7 +146,7 @@ cos restantes (1 semana, ~22h)
 
 | Métrica | Frontend | usuario-service | pedido-service |
 |---------|----------|-----------------|----------------|
-| Tests | ✅ 15 (80%+) | ✅ 20 (50%+) | ✅ 34 (70%+) |
+| Tests | ✅ 15 (70%+) | ✅ 20 (50%+) | ✅ 34 (70%+) |
 | Linting | ✅ ESLint | ❌ Ninguno | ❌ Ninguno |
 | Seguridad | ✅ OK | 🔴 Passwords plaintext | 🟡 OK |
 | Service Layer | ✅ OK | ✅ Implementado | ✅ Implementado |

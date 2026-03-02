@@ -1,26 +1,24 @@
-# TEST_PLAN.md - Usuario Service
+# TEST_PLAN.md - usuario-service
 
 ## 1. Overview
 
-| Campo | Valor |
-|-------|-------|
-| **Versión del documento** | 1.0 |
-| **Fecha** | 26 de febrero de 2026 |
-| **Microservicio** | usuario-service |
-| **Cobertura actual (JaCoCo)** | 49% (1.464/2.907 instrucciones) |
-| **Meta de cobertura** | ≥80% |
-| **Instrucciones a cubrir** | ~893 adicionales |
+| Campo | Valor                            |
+|-------|----------------------------------|
+| **Versión del documento** | 1.0                              |
+| **Fecha** | 26 de febrero de 2026            |
+| **Microservicio** | usuario-service                  |
+| **Cobertura actual (línea base)** | 82% instrucciones / 65% branches |
+| **Meta mínima de cobertura** | 70% instrucciones / 70% branches |
+| **Instrucciones totales** | 2,865 (508 missed)               |
+| **Branches totales** | 229 (78 missed)                  |
 
-### Resumen de Estado Actual
+### Resumen de Riesgos Brownfield
 
-El servicio `usuario-service` gestiona órdenes de compra con persistencia PostgreSQL y comunicación asíncrona vía RabbitMQ con `usuario-service`. Actualmente solo `OrderService` tiene cobertura significativa (93.6%), mientras que componentes críticos como `OrderController`, `GlobalExceptionHandler`, y toda la capa de mensajería están **sin cobertura (0%)**.
-
-### Riesgos Brownfield Identificados
-
-- Código legacy con tests de integración deshabilitados (`@Disabled`)
-- Dependencias de RabbitMQ sin mocks adecuados
-- GlobalExceptionHandler sin cobertura = errores no validados en producción
-- OrderController 0% = endpoints HTTP sin validación de comportamiento
+Este microservicio tiene código legacy con múltiples estrategias de persistencia (JSON, JPA, Caché), lo que genera:
+- Dependencias ocultas entre decoradores de caché y persistencia
+- Múltiples paths de ejecución en validadores con estrategias STRICT/LENIENT
+- Código de inicialización de archivos JSON que puede fallar silenciosamente
+- Configuración condicional de beans que afecta el comportamiento en runtime
 
 ---
 
@@ -28,35 +26,27 @@ El servicio `usuario-service` gestiona órdenes de compra con persistencia Postg
 
 ### 2.1 En Alcance
 
-| Componente | Tipo | Cobertura Actual | Prioridad |
-|------------|------|------------------|-----------|
-| `OrderController` | Controller | 0% (76 inst) | 🔴 CRÍTICO |
-| `GlobalExceptionHandler` | Exception Handler | 0% (212 inst) | 🔴 CRÍTICO |
-| `OrderMapper` | Mapper | 0% (43 inst) | 🟡 ALTO |
-| `UserResponseCache` | Messaging | 0% (86 inst) | 🟡 ALTO |
-| `UserServiceProducer` | Messaging | 0% (27 inst) | 🟡 ALTO |
-| `UserServiceConsumer` | Messaging | 0% (25 inst) | 🟡 ALTO |
-| `RabbitMQUserInfoClient` | Messaging | 0% (33 inst) | 🟡 ALTO |
-| `OrderEnrichmentFacade` | Service | 6.7% (56 inst missed) | 🟡 ALTO |
-| `UserEnrichmentService` | Service | 16% (21 inst missed) | 🟡 ALTO |
-| `ErrorResponse` + `Builder` | DTO | 0% (119 inst) | 🟢 MEDIO |
-| `OrderStateUpdateDto` | DTO | 0% (16 inst) | 🟢 MEDIO |
-| `UserRequest` | DTO | 0% (20 inst) | 🟢 MEDIO |
-| `OrderWithUserDto` | DTO | 47.9% (49 inst missed) | 🟢 MEDIO |
+| Paquete | Clases | Tipo de Prueba |
+|---------|--------|----------------|
+| `persistence` | `CachedUserPersistenceDecorator`, `UserJpaPersistence`, `UserRepository` | Unitaria + Integración |
+| `mapper` | `UsuarioMapper` | Unitaria |
+| `validation` | `StrictValidationStrategy`, `LenientValidationStrategy` | Unitaria |
+| `service` | `UsuarioService` | Unitaria |
+| `messaging` | `UserServiceProducer` | Unitaria |
+| `config` | `PersistenceConfig`, `UserPersistenceFactory` | Integración |
+| `exception` | `UsuarioNotFoundException`, `UsuarioYaExisteException` | Unitaria |
 
 ### 2.2 Fuera de Alcance
 
-| Componente | Razón |
-|------------|-------|
-| `Order` (model) | 100% cobertura |
-| `State` (enum) | 100% cobertura |
-| `OrderDto` | 100% cobertura |
-| `OrderNotFoundException` | 100% cobertura |
-| `OrderService` | 93.6% cobertura — solo 11 inst missed |
-| `RabbitMQConfig` | Configuración declarativa de beans |
-| `CorsConfig` | Configuración declarativa |
-| `RabbitMQMessageConverterConfig` | Configuración declarativa |
-| `PedidoServiceApplication` | Clase main de Spring Boot |
+| Clase/Paquete | Razón |
+|---------------|-------|
+| `UsuarioController` | 100% cobertura alcanzada |
+| `UserEntityMapper` | 100% cobertura alcanzada |
+| `UsuarioResponse` | 100% cobertura (DTO) |
+| `GlobalExceptionHandler` | 100% cobertura alcanzada |
+| `ValidationContext` | 100% cobertura alcanzada |
+| `UserServiceConsumer` | 100% cobertura alcanzada |
+| `RabbitMQConfig`, `CorsConfig` | Configuración estática, 100% cobertura |
 
 ---
 
@@ -64,36 +54,33 @@ El servicio `usuario-service` gestiona órdenes de compra con persistencia Postg
 
 ### 3.1 Pruebas Unitarias
 
-| Campo | Descripción |
-|-------|-------------|
-| **Objetivo** | Validar lógica aislada de mappers, servicios de enriquecimiento, cache y DTOs |
-| **Herramientas** | JUnit 5, Mockito, AssertJ |
-| **Alcance** | `OrderMapper`, `OrderEnrichmentFacade`, `UserEnrichmentService`, `UserResponseCache`, DTOs |
-| **Estrategia de aislamiento** | Mock de `IUserEnrichmentClient`, `IUserInfoClient`, `UserResponseCache` |
-| **Contribución estimada** | +15-18% cobertura (~230 instrucciones) |
+| Aspecto | Detalle |
+|---------|---------|
+| **Objetivo** | Validar lógica de negocio aislada en componentes individuales |
+| **Herramientas** | JUnit 5, Mockito |
+| **Alcance** | `UsuarioService`, `UsuarioMapper`, `StrictValidationStrategy`, `LenientValidationStrategy`, `CachedUserPersistenceDecorator`, `UserServiceProducer` |
+| **Estrategia de aislamiento** | Mock de `IUserPersistence`, `ValidationContext`, `RabbitTemplate` |
+| **Contribución estimada** | +10-14% cobertura |
 
 ### 3.2 Pruebas de Integración
 
-| Campo | Descripción |
-|-------|-------------|
-| **Objetivo** | Validar integración Controller↔Service, manejo de excepciones HTTP, flujos de mensajería |
-| **Herramientas** | `@WebMvcTest`, `MockMvc`, `@MockBean`, `@SpringBootTest` con H2 |
-| **Alcance** | `OrderController`, `GlobalExceptionHandler`, `UserServiceProducer`, `UserServiceConsumer` |
-| **Contribución estimada** | +25-30% cobertura (~400 instrucciones) |
+| Aspecto | Detalle |
+|---------|---------|
+| **Objetivo** | Validar comunicación entre componentes y con infraestructura |
+| **Herramientas** | `@SpringBootTest`, `@DataJpaTest`, `MockMvc`, `@MockBean` |
+| **Alcance** | `UserJpaPersistence↔JpaRepository`, `UserRepository↔JSON File`, `PersistenceConfig↔Beans` |
+| **Contribución estimada** | +6-8% cobertura |
 
 ---
 
 ## 4. Principios de Testing Aplicados
 
-| Principio | Aplicación |
-|-----------|------------|
-| **Testing shows presence of defects** | Los tests verifican comportamiento esperado pero no garantizan ausencia de bugs |
-| **Exhaustive testing is impossible** | Enfocamos en particiones de equivalencia y valores límite críticos |
-| **Early testing** | Priorizamos componentes 0% cobertura que bloquean CI |
-| **Defect clustering** | Priorizamos `GlobalExceptionHandler` (212 inst) y `OrderController` (76 inst) |
-| **Pesticide paradox** | Variamos escenarios entre particiones válidas e inválidas |
-| **Testing is context dependent** | Adaptamos técnicas al contexto brownfield con RabbitMQ |
-| **Absence-of-errors fallacy** | Tests de integración validan el sistema completo, no solo unidades |
+| Principio | Justificación |
+|-----------|---------------|
+| **Testing Shows Presence of Defects** | El microservicio tiene múltiples paths sin cubrir (50% en CachedDecorator) - las pruebas detectarán regresiones |
+| **Exhaustive Testing is Impossible** | Priorizamos branches y edge cases con mayor impacto de negocio (validación de emails, caché invalidation) |
+| **Early Testing** | La deuda técnica en persistencia requiere pruebas antes de nuevas features |
+| **Defect Clustering** | El paquete `persistence` concentra 73% de las instrucciones perdidas - priorizar |
 
 ---
 
@@ -101,52 +88,90 @@ El servicio `usuario-service` gestiona órdenes de compra con persistencia Postg
 
 ### 5.1 Partición de Equivalencia
 
-| Campo | Partición | Tipo | Válida/Inválida | Escenario Mapeado |
-|-------|-----------|------|-----------------|-------------------|
-| `name` | String no vacío ("Test Order") | Dato | ✅ Válida | UC-01-01 |
-| `name` | String vacío ("") | Dato | ❌ Inválida | UC-01-02 |
-| `name` | null | Dato | ❌ Inválida | UC-01-03 |
-| `name` | Solo espacios ("   ") | Dato | ❌ Inválida | UC-01-04 |
-| `description` | String válido | Dato | ✅ Válida | UC-01-01 |
-| `description` | null | Dato | ❌ Inválida | UC-01-05 |
-| `idUser` | Entero positivo (1, 100) | Dato | ✅ Válida | UC-01-01 |
-| `idUser` | Cero (0) | Dato | ❌ Inválida | UC-01-06 |
-| `idUser` | Entero negativo (-1) | Dato | ❌ Inválida | UC-01-07 |
-| `idUser` | null | Dato | ❌ Inválida | UC-01-08 |
-| `orderId` | ID existente | Dato | ✅ Válida | UC-02-01 |
-| `orderId` | ID no existente | Dato | ❌ Inválida | UC-02-02 |
-| `state` | Estado válido (PROCESSING, DELIVERED) | Dato | ✅ Válida | UC-03-01 |
-| `state` | null | Dato | ❌ Inválida | UC-03-02 |
-| `userId` timeout | Respuesta dentro de timeout | Tiempo | ✅ Válida | UC-04-01 |
-| `userId` timeout | Respuesta después de timeout | Tiempo | ❌ Inválida | UC-04-02 |
+#### CachedUserPersistenceDecorator
+
+| Partición | Tipo | Válida/Inválida | Escenario Mapeado |
+|-----------|------|-----------------|-------------------|
+| Usuario existente en caché | Valid | Válida | `findById_cachedUser_returnsFromCache` |
+| Usuario no en caché | Valid | Válida | `findById_uncachedUser_delegatesToPersistence` |
+| Email null | Valid | Inválida | `findByEmail_nullEmail_returnsNull` |
+| Email normalizado (mayúsculas) | Valid | Válida | `findByEmail_upperCaseEmail_normalizedLookup` |
+| Update invalida caché anterior | Valid | Válida | `update_invalidatesOldAndNewCache` |
+| Delete invalida caché | Valid | Válida | `deleteById_invalidatesCache` |
+
+#### UsuarioMapper
+
+| Partición | Tipo | Válida/Inválida | Escenario Mapeado |
+|-----------|------|-----------------|-------------------|
+| Request null | Input | Inválida | `toUser_nullRequest_returnsNull` |
+| Request válido completo | Input | Válida | `toUser_validRequest_createsUserWithAllFields` |
+| Update request parcial | Input | Válida | `toUserUpdate_partialFields_updatesOnlyProvided` |
+| User null para response | Input | Inválida | `toResponse_nullUser_returnsNull` |
+
+#### UserJpaPersistence
+
+| Partición | Tipo | Válida/Inválida | Escenario Mapeado |
+|-----------|------|-----------------|-------------------|
+| Usuario existente para update | Valid | Válida | `update_existingUser_updatesAllFields` |
+| Usuario inexistente para update | Valid | Inválida | `update_nonExistingUser_returnsNull` |
+| Partial update con campo active Boolean | Valid | Válida | `partialUpdate_activeAsBoolean_parsesCorrectly` |
+| Partial update con campo active String | Valid | Válida | `partialUpdate_activeAsString_parsesCorrectly` |
 
 ### 5.2 Análisis de Valores Límite
 
-| Campo | Mínimo | Máximo | Valores Límite | Escenario Mapeado |
-|-------|--------|--------|----------------|-------------------|
-| `idUser` | 1 | Integer.MAX_VALUE | 0, 1, 2, MAX-1, MAX | BVA-01, BVA-02 |
-| `orderId` | 1 | - | 0, 1, -1 | BVA-03, BVA-04 |
-| `name.length` | 1 | 255 (asumido) | 0, 1, 254, 255, 256 | BVA-05, BVA-06 |
-| `timeout` (ms) | 0 | 3000 | 0, 1, 2999, 3000, 3001 | BVA-07, BVA-08 |
-| `userId` en cache | - | - | userId presente, userId ausente | BVA-09, BVA-10 |
+#### Validación de Contraseñas (StrictValidationStrategy)
 
-### 5.3 Tabla de Decisión - Creación de Orden
+| Campo | Mín | Máx | Entradas Límite | Escenario Mapeado |
+|-------|-----|-----|-----------------|-------------------|
+| password.length | 12 | - | 11, 12, 13 | `validatePassword_11chars_throwsException`, `validatePassword_12chars_passes` |
+| nombre.length | 3 | - | 2, 3, 4 | `validateName_2chars_throwsException`, `validateName_3chars_passes` |
 
-| Condición / Regla | R1 | R2 | R3 | R4 | R5 | R6 |
-|-------------------|----|----|----|----|----|----|
-| `name` válido | ✅ | ❌ | ✅ | ✅ | ✅ | ❌ |
-| `description` válido | ✅ | ✅ | ❌ | ✅ | ✅ | ❌ |
-| `idUser` > 0 | ✅ | ✅ | ✅ | ❌ | ✅ | ❌ |
-| **Acción** | 201 Created | 400 Bad Request | 400 Bad Request | 400 Bad Request | 201 Created | 400 Bad Request |
-| **Escenario** | DT-01 | DT-02 | DT-03 | DT-04 | DT-01 | DT-05 |
+#### Validación de Contraseñas (LenientValidationStrategy)
 
-### 5.4 Tabla de Decisión - Manejo de Excepciones
+| Campo | Mín | Máx | Entradas Límite | Escenario Mapeado |
+|-------|-----|-----|-----------------|-------------------|
+| password.length | 8 | - | 7, 8, 9 | `validatePassword_7chars_throwsException`, `validatePassword_8chars_passes` |
+| nombre.length | 2 | - | 1, 2, 3 | `validateName_1char_throwsException`, `validateName_2chars_passes` |
 
-| Condición / Regla | R1 | R2 | R3 | R4 | R5 | R6 |
-|-------------------|----|----|----|----|----|----|
-| Excepción tipo | OrderNotFound | IllegalArgument | ValidationError | MalformedJSON | OrderCreation | Generic |
-| **HTTP Status** | 404 | 400 | 400 | 400 | 500 | 500 |
-| **Escenario** | EH-01 | EH-02 | EH-03 | EH-04 | EH-05 | EH-06 |
+#### UserRepository (JSON persistence)
+
+| Campo | Mín | Máx | Entradas Límite | Escenario Mapeado |
+|-------|-----|-----|-----------------|-------------------|
+| user.id | 0 | Integer.MAX | 0, 1, -1 | `save_userWithZeroId_generatesNewId`, `save_userWithNegativeId_generatesNewId` |
+
+### 5.3 Tabla de Decisión
+
+#### CachedUserPersistenceDecorator - Invalidación de Caché
+
+| # | Usuario en idCache | Usuario en emailCache | Email cambió | Acción esperada |
+|---|--------------------|-----------------------|--------------|-----------------|
+| 1 | Sí | Sí | No | Invalidar ambas entradas |
+| 2 | Sí | No | No | Invalidar solo idCache |
+| 3 | No | Sí | No | Invalidar solo emailCache |
+| 4 | Sí | Sí | Sí | Invalidar viejo email + nuevo email + id |
+| 5 | No | No | - | No hacer nada (no-op) |
+
+**Escenarios derivados:**
+- `update_userInBothCaches_invalidatesBoth`
+- `update_emailChanged_invalidatesOldAndNewEmail`
+- `partialUpdate_userNotInCache_noInvalidation`
+
+#### StrictValidationStrategy - Validación de Email
+
+| # | Email null | Email con espacios | Dominio válido | Dominio temporal | Acción esperada |
+|---|------------|--------------------|--------------------|------------------|-----------------|
+| 1 | Sí | - | - | - | Throw "email vacío" |
+| 2 | No | Sí | - | - | Throw "espacios" |
+| 3 | No | No | No | - | Throw "formato inválido" |
+| 4 | No | No | Sí | Sí | Throw "email temporal" |
+| 5 | No | No | Sí | No | Pasa validación |
+
+**Escenarios derivados:**
+- `validateEmail_null_throwsEmptyException`
+- `validateEmail_withSpaces_throwsSpaceException`
+- `validateEmail_invalidDomain_throwsFormatException`
+- `validateEmail_tempMailDomain_throwsTemporaryEmailException`
+- `validateEmail_valid_passes`
 
 ---
 
@@ -154,527 +179,600 @@ El servicio `usuario-service` gestiona órdenes de compra con persistencia Postg
 
 ### 6.1 Escenarios de Pruebas Unitarias
 
-#### Feature: OrderMapper - Conversión de entidades a DTOs
+#### Feature: CachedUserPersistenceDecorator Cache Management
 
 ```gherkin
-Feature: OrderMapper - Entity to DTO Conversion
-  As a developer
-  I want to ensure OrderMapper correctly converts between Order and OrderDto
-  So that data integrity is maintained across layers
-
-  # Cubre: mapper 0% — toDto method
-  @critical
-  Scenario: UM-01 - Convertir Order entity a OrderDto exitosamente
-    Given una entidad Order con id=1, name="Test", description="Desc", idUser=10, state=PROCESSING, active=true
-    When se invoca orderMapper.toDto(order)
-    Then el OrderDto resultante debe tener los mismos valores
-    And el id debe ser 1
-    And el state debe ser PROCESSING
-
-  # Cubre: mapper 0% — toDto null handling
-  @high
-  Scenario: UM-02 - Convertir Order null retorna null
-    Given una entidad Order null
-    When se invoca orderMapper.toDto(null)
-    Then el resultado debe ser null
-
-  # Cubre: mapper 0% — toEntity method
-  @critical
-  Scenario: UM-03 - Convertir OrderDto a Order entity exitosamente
-    Given un OrderDto con name="New Order", description="New Desc", idUser=5
-    When se invoca orderMapper.toEntity(orderDto)
-    Then la entidad Order resultante debe tener los mismos valores
-
-  # Cubre: mapper 0% — toEntity null handling
-  @high
-  Scenario: UM-04 - Convertir OrderDto null retorna null
-    Given un OrderDto null
-    When se invoca orderMapper.toEntity(null)
-    Then el resultado debe ser null
-```
-
-#### Feature: OrderEnrichmentFacade - Enriquecimiento de pedidos
-
-```gherkin
-Feature: OrderEnrichmentFacade - Order Enrichment with User Data
-  As a system
-  I want to enrich order data with user information
-  So that clients receive complete order+user payloads
+Feature: Gestión de caché en CachedUserPersistenceDecorator
+  Como sistema de persistencia
+  Quiero cachear usuarios consultados
+  Para mejorar el rendimiento de consultas repetidas
 
   Background:
-    Given un mock de IUserEnrichmentClient configurado
+    Given un delegate mock de IUserPersistence
+    And un CachedUserPersistenceDecorator configurado
 
-  # Cubre: OrderEnrichmentFacade 6.7% — enrich happy path
+  # Cubre: CachedUserPersistenceDecorator 50% - findById branch sin cubrir
   @critical
-  Scenario: UE-01 - Enriquecer orden con datos de usuario exitosamente
-    Given un OrderDto válido con idUser=10
-    And el userEnrichmentClient retorna UserResponse(id=10, name="John", mail="john@test.com")
-    When se invoca orderEnrichmentFacade.enrich(orderDto)
-    Then el OrderWithUserDto resultante debe contener los datos del pedido
-    And debe contener el UserResponse con id=10
+  Scenario: Consulta por ID cachea el usuario
+    Given un usuario con ID 1 existe en el delegate
+    When se consulta findById(1) por primera vez
+    Then el delegate debe ser invocado
+    And el usuario debe estar en idCache
+    When se consulta findById(1) por segunda vez
+    Then el delegate NO debe ser invocado nuevamente
 
-  # Cubre: OrderEnrichmentFacade — enrich with null orderDto
+  # Cubre: CachedUserPersistenceDecorator - findById retorna null
   @high
-  Scenario: UE-02 - Enriquecer orden null retorna null
-    Given un OrderDto null
-    When se invoca orderEnrichmentFacade.enrich(null)
+  Scenario: Consulta por ID inexistente no cachea null
+    Given ningún usuario con ID 999 existe en el delegate
+    When se consulta findById(999)
+    Then el delegate debe ser invocado
+    And idCache NO debe contener la entrada 999
+
+  # Cubre: CachedUserPersistenceDecorator - findByEmail normalización
+  @high
+  Scenario: Consulta por email normaliza mayúsculas
+    Given un usuario con email "TEST@EXAMPLE.COM" existe en el delegate
+    When se consulta findByEmail("TEST@EXAMPLE.COM")
+    Then el caché debe almacenar con clave "test@example.com"
+    When se consulta findByEmail("test@example.com")
+    Then el delegate NO debe ser invocado nuevamente
+
+  # Cubre: CachedUserPersistenceDecorator - findByEmail null
+  @medium
+  Scenario: Consulta por email null retorna null
+    When se consulta findByEmail(null)
+    Then el resultado debe ser null
+    And el delegate NO debe ser invocado
+
+  # Cubre: CachedUserPersistenceDecorator - update invalida caché
+  @critical
+  Scenario: Actualización invalida caché del usuario anterior
+    Given un usuario con ID 1 y email "old@test.com" está cacheado
+    When se actualiza el usuario 1 con email "new@test.com"
+    Then el caché de email "old@test.com" debe ser invalidado
+    And el caché de email "new@test.com" debe ser invalidado
+    And el caché de ID 1 debe ser invalidado
+
+  # Cubre: CachedUserPersistenceDecorator - partialUpdate con usuario null
+  @high
+  Scenario: Actualización parcial con usuario inexistente no falla
+    Given ningún usuario con ID 999 existe en el delegate
+    When se ejecuta partialUpdate(999, {"name": "Test"})
+    Then el resultado debe ser null
+    And no debe ocurrir NullPointerException
+
+  # Cubre: CachedUserPersistenceDecorator - deleteById invalida caché
+  @high
+  Scenario: Eliminación invalida caché del usuario
+    Given un usuario con ID 1 y email "test@test.com" está cacheado
+    When se ejecuta deleteById(1)
+    Then el caché de email "test@test.com" debe ser invalidado
+    And el caché de ID 1 debe ser invalidado
+
+  # Cubre: CachedUserPersistenceDecorator - deleteAll limpia caché
+  @medium
+  Scenario: Eliminar todos limpia todo el caché
+    Given varios usuarios están cacheados
+    When se ejecuta deleteAll()
+    Then emailCache debe estar vacío
+    And idCache debe estar vacío
+
+  # Cubre: CachedUserPersistenceDecorator - invalidateUserCache con null
+  @medium
+  Scenario: Invalidar caché con usuario null no falla
+    When se invoca invalidateUserCache(null) via método privado
+    Then no debe ocurrir NullPointerException
+
+  # Cubre: CachedUserPersistenceDecorator - getCacheStats
+  @low
+  Scenario: Obtener estadísticas de caché
+    Given 3 usuarios están en idCache
+    And 2 usuarios están en emailCache
+    When se obtiene getCacheStats()
+    Then debe retornar "Cache Stats - Email entries: 2, ID entries: 3"
+```
+
+#### Feature: UserJpaPersistence Database Operations
+
+```gherkin
+Feature: Operaciones de persistencia JPA
+  Como capa de persistencia
+  Quiero operar con la base de datos PostgreSQL
+  Para persistir y recuperar usuarios
+
+  Background:
+    Given un UserJpaRepository mock
+    And un UserEntityMapper mock
+    And un UserJpaPersistence configurado
+
+  # Cubre: UserJpaPersistence 60% - update branch no cubierto
+  @critical
+  Scenario: Actualizar usuario existente modifica todos los campos
+    Given un usuario con ID 1 existe en el repositorio JPA
+    When se ejecuta update(1, usuarioModificado)
+    Then el name debe actualizarse
+    And el password debe actualizarse
+    And el mail debe actualizarse
+    And el active debe actualizarse
+    And el usuario actualizado debe retornarse mapeado a dominio
+
+  # Cubre: UserJpaPersistence - update usuario inexistente
+  @high
+  Scenario: Actualizar usuario inexistente retorna null
+    Given ningún usuario con ID 999 existe en el repositorio JPA
+    When se ejecuta update(999, usuario)
     Then el resultado debe ser null
 
-  # Cubre: OrderEnrichmentFacade — enrich when user service fails
+  # Cubre: UserJpaPersistence - partialUpdate branch Boolean
   @high
-  Scenario: UE-03 - Enriquecer orden cuando el servicio de usuario falla
-    Given un OrderDto válido con idUser=999
-    And el userEnrichmentClient lanza una excepción
-    When se invoca orderEnrichmentFacade.enrich(orderDto)
-    Then el OrderWithUserDto resultante debe contener los datos del pedido
-    And el campo user debe ser null
+  Scenario: Actualización parcial con active como Boolean
+    Given un usuario con ID 1 existe en el repositorio JPA
+    When se ejecuta partialUpdate(1, {"active": true})
+    Then el campo active debe ser true (parseado como Boolean)
+
+  # Cubre: UserJpaPersistence - partialUpdate branch String
+  @high
+  Scenario: Actualización parcial con active como String "true"
+    Given un usuario con ID 1 existe en el repositorio JPA
+    When se ejecuta partialUpdate(1, {"active": "true"})
+    Then el campo active debe ser true (parseado desde String)
+
+  # Cubre: UserJpaPersistence - partialUpdate branch String "false"
+  @medium
+  Scenario: Actualización parcial con active como String "false"
+    Given un usuario con ID 1 existe en el repositorio JPA
+    When se ejecuta partialUpdate(1, {"active": "false"})
+    Then el campo active debe ser false
+
+  # Cubre: UserJpaPersistence - partialUpdate usuario inexistente
+  @high
+  Scenario: Actualización parcial de usuario inexistente retorna null
+    Given ningún usuario con ID 999 existe en el repositorio JPA
+    When se ejecuta partialUpdate(999, {"name": "Test"})
+    Then el resultado debe ser null
+
+  # Cubre: UserJpaPersistence - applyUpdates con todos los campos
+  @medium
+  Scenario: Actualización parcial aplica múltiples campos
+    Given un usuario con ID 1 existe en el repositorio JPA
+    When se ejecuta partialUpdate(1, {"name": "Nuevo", "mail": "new@test.com", "password": "newpass"})
+    Then todos los campos proporcionados deben actualizarse
 ```
 
-#### Feature: UserEnrichmentService - Servicio de enriquecimiento
+#### Feature: UserRepository JSON Persistence
 
 ```gherkin
-Feature: UserEnrichmentService - User Info Fetching
-  As a service
-  I want to fetch user information from external service
-  So that orders can be enriched with user data
+Feature: Persistencia de usuarios en JSON
+  Como sistema legacy
+  Quiero persistir usuarios en archivo JSON
+  Para mantener compatibilidad con sistemas existentes
 
-  # Cubre: UserEnrichmentService 16% — fetchUserInfo success
-  @high
-  Scenario: US-01 - Obtener información de usuario exitosamente
-    Given un mock de IUserInfoClient
-    And el cliente retorna UserResponse para userId=5
-    When se invoca userEnrichmentService.fetchUserInfo(5)
-    Then debe retornar el UserResponse correspondiente
+  Background:
+    Given un archivo JSON temporal para tests
+    And un UserRepository configurado con el archivo
 
-  # Cubre: UserEnrichmentService — fetchUserInfo exception handling
+  # Cubre: UserRepository 76% - init() con USERS_FILE env variable
+  @critical
+  Scenario: Inicialización con variable de entorno USERS_FILE
+    Given la variable de entorno USERS_FILE apunta a un archivo válido
+    When se ejecuta initialize()
+    Then los usuarios deben cargarse desde USERS_FILE
+
+  # Cubre: UserRepository - init() sin configuración
   @high
-  Scenario: US-02 - Manejar error al obtener información de usuario
-    Given un mock de IUserInfoClient
-    And el cliente lanza una excepción
-    When se invoca userEnrichmentService.fetchUserInfo(5)
-    Then debe retornar null
-    And debe logear una advertencia
+  Scenario: Inicialización sin configuración lanza excepción
+    Given filePath es null
+    And USERS_FILE no está configurado
+    When se ejecuta initialize()
+    Then debe lanzarse IllegalStateException con mensaje "users.persistence.file no está configurado"
+
+  # Cubre: UserRepository - loadUsers con IDs inválidos
+  @high
+  Scenario: Carga de usuarios con ID null genera nuevo ID
+    Given el archivo JSON contiene un usuario con ID null
+    When se ejecuta initialize()
+    Then el usuario debe tener un ID generado automáticamente
+
+  # Cubre: UserRepository - loadUsers con ID <= 0
+  @high
+  Scenario: Carga de usuarios con ID cero o negativo genera nuevo ID
+    Given el archivo JSON contiene un usuario con ID 0
+    When se ejecuta initialize()
+    Then el usuario debe tener un ID positivo generado
+
+  # Cubre: UserRepository - writeToFile con jsonFile null
+  @high
+  Scenario: Escribir archivo cuando jsonFile es null
+    Given jsonFile es null
+    And filePath está configurado correctamente
+    When se ejecuta writeToFile()
+    Then el archivo debe crearse en la ruta configurada
+
+  # Cubre: UserRepository - writeToFile con filePath null
+  @medium
+  Scenario: Escribir archivo sin configuración lanza excepción
+    Given jsonFile es null
+    And filePath es null
+    When se ejecuta writeToFile()
+    Then debe lanzarse IllegalStateException
+
+  # Cubre: UserRepository - save con ID existente
+  @medium
+  Scenario: Guardar usuario con ID ya asignado preserva el ID
+    Given no hay usuarios en el repositorio
+    When se guarda un usuario con ID 100
+    Then el usuario debe guardarse con ID 100
+    And nextId debe ser al menos 101
+
+  # Cubre: UserRepository - partialUpdate usuario inexistente
+  @medium
+  Scenario: Actualización parcial de usuario inexistente retorna null
+    Given ningún usuario con ID 999 existe
+    When se ejecuta partialUpdate(999, {"name": "Test"})
+    Then el resultado debe ser null
 ```
 
-#### Feature: UserResponseCache - Cache de respuestas
+#### Feature: UsuarioMapper Transformations
 
 ```gherkin
-Feature: UserResponseCache - In-Memory Response Caching
-  As a messaging component
-  I want to cache user responses temporarily
-  So that async responses can be retrieved by waiting callers
+Feature: Transformaciones de UsuarioMapper
+  Como capa de presentación
+  Quiero convertir entre DTOs y entidades de dominio
+  Para separar las capas de la aplicación
 
-  # Cubre: UserResponseCache 0% — store method
-  @critical
-  Scenario: UC-01 - Almacenar respuesta de usuario en cache
-    Given un UserResponseCache vacío
-    And un UserResponse con id=10, name="Test User"
-    When se invoca cache.store(userResponse)
-    Then la respuesta debe estar disponible para userId=10
-
-  # Cubre: UserResponseCache 0% — store null ignored
+  # Cubre: UsuarioMapper 51% - toUser con request null
   @high
-  Scenario: UC-02 - Ignorar almacenamiento de respuesta null
-    Given un UserResponseCache vacío
-    When se invoca cache.store(null)
-    Then el cache debe permanecer vacío
+  Scenario: Convertir CreateUsuarioRequest null a User
+    When se invoca toUser(null)
+    Then el resultado debe ser null
 
-  # Cubre: UserResponseCache 0% — awaitResponse success
-  @critical
-  Scenario: UC-03 - Esperar y obtener respuesta dentro del timeout
-    Given un UserResponseCache con UserResponse para userId=10
-    When se invoca cache.awaitResponse(10, 1000)
-    Then debe retornar el UserResponse para userId=10
-    And la respuesta debe ser removida del cache
+  # Cubre: UsuarioMapper - toUser con valores válidos
+  @high
+  Scenario: Convertir CreateUsuarioRequest válido a User
+    Given un CreateUsuarioRequest con nombre "Juan", email "juan@test.com", contraseña "Pass123!"
+    When se invoca toUser(request)
+    Then el User debe tener name "Juan"
+    And el User debe tener mail "juan@test.com"
+    And el User debe tener password "Pass123!"
+    And el User debe tener active true
 
-  # Cubre: UserResponseCache 0% — awaitResponse timeout
-  @critical
-  Scenario: UC-04 - Timeout al esperar respuesta no disponible
-    Given un UserResponseCache vacío
-    When se invoca cache.awaitResponse(999, 100)
-    Then debe retornar null después del timeout
+  # Cubre: UsuarioMapper - toUserUpdate con request null
+  @high
+  Scenario: Convertir UpdateUsuarioRequest null retorna usuario existente
+    Given un User existente con name "Original"
+    When se invoca toUserUpdate(null, existente)
+    Then el resultado debe ser el usuario existente sin cambios
 
-  # Cubre: UserResponseCache 0% — awaitResponse interrupted
+  # Cubre: UsuarioMapper - toUserUpdate parcial
+  @high
+  Scenario: Convertir UpdateUsuarioRequest parcial actualiza solo campos proporcionados
+    Given un User existente con name "Original", email "original@test.com"
+    And un UpdateUsuarioRequest con solo nombre "Nuevo"
+    When se invoca toUserUpdate(request, existente)
+    Then el User debe tener name "Nuevo"
+    And el User debe mantener email "original@test.com"
+
+  # Cubre: UsuarioMapper - toUserUpdate con todos los campos
   @medium
-  Scenario: UC-05 - Manejar interrupción durante espera
-    Given un UserResponseCache vacío
-    And el thread será interrumpido durante la espera
-    When se invoca cache.awaitResponse(10, 5000)
-    Then debe retornar null
-    And el thread debe tener el flag interrupted activo
+  Scenario: Convertir UpdateUsuarioRequest completo actualiza todos los campos
+    Given un User existente
+    And un UpdateUsuarioRequest con nombre, email, contraseña y activo
+    When se invoca toUserUpdate(request, existente)
+    Then todos los campos del User deben actualizarse
+
+  # Cubre: UsuarioMapper - toResponse con user null
+  @high
+  Scenario: Convertir User null a UsuarioResponse
+    When se invoca toResponse(null)
+    Then el resultado debe ser null
 ```
 
-#### Feature: DTOs - Validación de modelos de datos
+#### Feature: StrictValidationStrategy Validation
 
 ```gherkin
-Feature: DTO Constructors and Accessors
-  As a developer
-  I want DTOs to correctly store and retrieve data
-  So that data transfer between layers works correctly
+Feature: Validación estricta de usuarios
+  Como sistema de seguridad
+  Quiero aplicar validaciones rigurosas
+  Para cuentas de administrador y usuarios privilegiados
 
-  # Cubre: OrderStateUpdateDto 0% — constructor and accessors
-  @medium
-  Scenario: DTO-01 - OrderStateUpdateDto constructor y getters
-    Given un state DELIVERED
-    When se crea OrderStateUpdateDto(DELIVERED)
-    Then getState() debe retornar DELIVERED
-
-  # Cubre: OrderStateUpdateDto 0% — setter
-  @medium
-  Scenario: DTO-02 - OrderStateUpdateDto setter
-    Given un OrderStateUpdateDto con state PROCESSING
-    When se invoca setState(TRAVELING_TO_WAREHOUSE)
-    Then getState() debe retornar TRAVELING_TO_WAREHOUSE
-
-  # Cubre: UserRequest 0% — all methods
-  @medium
-  Scenario: DTO-03 - UserRequest constructor y accessors
-    Given un userId=25
-    When se crea UserRequest(25)
-    Then getUserId() debe retornar 25
-    And toString() debe contener "userId=25"
-
-  # Cubre: OrderWithUserDto 47.9% — remaining accessors
-  @medium
-  Scenario: DTO-04 - OrderWithUserDto setters
-    Given un OrderWithUserDto vacío
-    When se setean todos los campos
-    Then los getters deben retornar los valores seteados
-
-  # Cubre: ErrorResponse 0% — builder pattern
+  # Cubre: StrictValidationStrategy 91% - validateName con espacios
   @high
-  Scenario: DTO-05 - ErrorResponse builder completo
-    Given valores para timestamp, status=400, error="Bad Request", message="Invalid"
-    When se construye con ErrorResponse.builder()
-    Then el ErrorResponse debe tener todos los campos correctos
+  Scenario: Validar nombre con espacios al inicio o final
+    Given un CreateUsuarioRequest con nombre " Juan "
+    When se ejecuta validateForCreation
+    Then debe lanzarse ValidationException con mensaje "espacios al inicio o final"
 
-  # Cubre: ErrorResponse 0% — validationErrors map
+  # Cubre: StrictValidationStrategy - validateEmail con dominio temporal
   @high
-  Scenario: DTO-06 - ErrorResponse con validationErrors
-    Given un mapa de errores de validación
-    When se construye ErrorResponse con validationErrors
-    Then getValidationErrors() debe retornar el mapa
+  Scenario: Validar email con dominio temporal rechazado
+    Given un CreateUsuarioRequest con email "user@tempmail.com"
+    When se ejecuta validateForCreation
+    Then debe lanzarse ValidationException con mensaje "emails temporales"
+
+  # Cubre: StrictValidationStrategy - validateEmail con trash-mail.com
+  @medium
+  Scenario: Validar email con dominio trash-mail.com rechazado
+    Given un CreateUsuarioRequest con email "user@trash-mail.com"
+    When se ejecuta validateForCreation
+    Then debe lanzarse ValidationException con mensaje "emails temporales"
+
+  # Cubre: StrictValidationStrategy - isCommonPassword con contraseñas comunes
+  @high
+  Scenario: Validar contraseña común "Password123!"
+    Given un CreateUsuarioRequest con contraseña "Password123!"
+    When se ejecuta validateForCreation
+    Then debe lanzarse ValidationException con mensaje "demasiado común"
+
+  # Cubre: StrictValidationStrategy - isCommonPassword case insensitive
+  @medium
+  Scenario: Validar contraseña común en mayúsculas
+    Given un CreateUsuarioRequest con contraseña "ADMIN123456!"
+    When se ejecuta validateForCreation
+    Then debe lanzarse ValidationException con mensaje "demasiado común"
+
+  # Cubre: StrictValidationStrategy - validateForUpdate solo campos presentes
+  @medium
+  Scenario: Validación de actualización ignora campos null
+    Given un UpdateUsuarioRequest con solo nombre válido (otros campos null)
+    When se ejecuta validateForUpdate
+    Then la validación debe pasar (no valida campos null)
+```
+
+#### Feature: LenientValidationStrategy Validation
+
+```gherkin
+Feature: Validación leniente de usuarios
+  Como sistema de auto-registro
+  Quiero aplicar validaciones básicas
+  Para facilitar la creación de usuarios estándar
+
+  # Cubre: LenientValidationStrategy 95% - edge cases faltantes
+  @medium
+  Scenario: Validar nombre con solo espacios
+    Given un CreateUsuarioRequest con nombre "   "
+    When se ejecuta validateForCreation
+    Then debe lanzarse ValidationException con mensaje "vacío"
+
+  # Cubre: LenientValidationStrategy - validateForUpdate todos los campos null
+  @medium
+  Scenario: Validación de actualización con todos los campos null
+    Given un UpdateUsuarioRequest con todos los campos null
+    When se ejecuta validateForUpdate
+    Then la validación debe pasar (no hay campos que validar)
+```
+
+#### Feature: UsuarioService Business Logic
+
+```gherkin
+Feature: Lógica de negocio de usuarios
+  Como servicio de usuarios
+  Quiero orquestar operaciones de usuario
+  Para mantener la coherencia del negocio
+
+  Background:
+    Given un IUserPersistence mock
+    And un ValidationContext mock
+    And un UsuarioService configurado
+
+  # Cubre: UsuarioService 94% - obtenerPorIdentificador con ID inválido
+  @high
+  Scenario: Obtener usuario por identificador no numérico ni email
+    When se invoca obtenerPorIdentificador("abc123")
+    Then el resultado debe ser Optional.empty()
+
+  # Cubre: UsuarioService - tryParseId con NumberFormatException
+  @medium
+  Scenario: Parsear identificador con texto mixto
+    When se invoca obtenerPorIdentificador("123abc")
+    Then el resultado debe ser Optional.empty()
+
+  # Cubre: UsuarioService - validateEmailUniqueness con email duplicado
+  @high
+  Scenario: Crear usuario con email duplicado lanza excepción
+    Given un usuario existente con email "existing@test.com"
+    And un CreateUsuarioRequest con email "existing@test.com"
+    When se invoca crear(request)
+    Then debe lanzarse UsuarioYaExisteException
+
+  # Cubre: UsuarioService - actualizar email a uno ya existente
+  @high
+  Scenario: Actualizar usuario con email que ya pertenece a otro
+    Given un usuario con ID 1 y email "user1@test.com"
+    And un usuario con ID 2 y email "user2@test.com"
+    And un UpdateUsuarioRequest para usuario 1 con nuevo email "user2@test.com"
+    When se invoca actualizar(1, request)
+    Then debe lanzarse UsuarioYaExisteException
+```
+
+#### Feature: UserServiceProducer Messaging
+
+```gherkin
+Feature: Productor de mensajes RabbitMQ
+  Como sistema de mensajería
+  Quiero enviar eventos de usuario
+  Para comunicación asíncrona entre servicios
+
+  Background:
+    Given un RabbitTemplate mock
+
+  # Cubre: UserServiceProducer 20% - envío de mensajes
+  @critical
+  Scenario: Enviar mensaje de usuario creado
+    Given un usuario recién creado con ID 1
+    When se invoca sendUserCreatedMessage(usuario)
+    Then RabbitTemplate.convertAndSend debe ser invocado
+    And el mensaje debe contener los datos del usuario
+
+  # Cubre: UserServiceProducer - manejo de errores
+  @high
+  Scenario: Error al enviar mensaje no propaga excepción
+    Given RabbitTemplate lanza AmqpException
+    When se invoca sendUserCreatedMessage(usuario)
+    Then la excepción debe ser logueada
+    And no debe propagarse la excepción
+```
+
+#### Feature: Exception Constructors
+
+```gherkin
+Feature: Constructores de excepciones personalizadas
+  Como sistema de manejo de errores
+  Quiero excepciones con mensajes descriptivos
+  Para facilitar el debugging
+
+  # Cubre: UsuarioNotFoundException 44% - constructor alternativo
+  @medium
+  Scenario: Crear UsuarioNotFoundException con mensaje
+    When se crea new UsuarioNotFoundException("Usuario 1 no encontrado")
+    Then el mensaje debe ser "Usuario 1 no encontrado"
+
+  # Cubre: UsuarioYaExisteException 44% - constructor alternativo  
+  @medium
+  Scenario: Crear UsuarioYaExisteException con mensaje
+    When se crea new UsuarioYaExisteException("Email ya registrado")
+    Then el mensaje debe ser "Email ya registrado"
 ```
 
 ### 6.2 Escenarios de Pruebas de Integración
 
-#### Feature: OrderController - Endpoints REST
+#### Feature: UserJpaPersistence Integration
 
 ```gherkin
-Feature: OrderController - REST API Integration
-  As an API consumer
-  I want to interact with order endpoints
-  So that I can manage orders via HTTP
+Feature: Integración de persistencia JPA con PostgreSQL
+  Como capa de persistencia
+  Quiero operar con PostgreSQL real
+  Para validar el mapeo ORM y queries
 
   Background:
-    Given el servicio de pedidos está disponible
-    And el repositorio está mockeado con @MockBean
-    And el OrderService está configurado
+    Given un contexto @DataJpaTest con H2 en memoria
+    And el schema de usuarios creado
 
-  # Cubre: controller 0% — POST /orders endpoint
+  # Cubre: UserJpaPersistence↔UserJpaRepository integración
   @critical
-  Scenario: IC-01 - Crear pedido con datos válidos retorna 201
-    Given un OrderDto válido con name="Test Order", description="Desc", idUser=1
-    When se envía POST a "/orders" con el OrderDto
-    Then el status de respuesta debe ser 201 Created
-    And el header Location debe contener "/orders/{id}"
-    And el body debe contener el pedido creado con state=PROCESSING
+  Scenario: Guardar y recuperar usuario completo
+    Given un User con todos los campos válidos
+    When se invoca save(user)
+    Then el usuario debe persistirse en la base de datos
+    When se invoca findById(savedId)
+    Then el usuario recuperado debe tener todos los campos correctos
 
-  # Cubre: controller 0% — POST /orders validation
-  @critical
-  Scenario: IC-02 - Crear pedido con name vacío retorna 400
-    Given un OrderDto con name="" (vacío)
-    When se envía POST a "/orders" con el OrderDto
-    Then el status de respuesta debe ser 400 Bad Request
-    And el body debe contener errores de validación
-
-  # Cubre: controller 0% — POST /orders null idUser
+  # Cubre: UserJpaPersistence - findByMailIgnoreCase query
   @high
-  Scenario: IC-03 - Crear pedido sin idUser retorna 400
-    Given un OrderDto con idUser=null
-    When se envía POST a "/orders" con el OrderDto
-    Then el status de respuesta debe ser 400 Bad Request
+  Scenario: Buscar usuario por email case-insensitive
+    Given un usuario guardado con email "Test@Example.COM"
+    When se invoca findByEmail("test@example.com")
+    Then el usuario debe ser encontrado
 
-  # Cubre: controller 0% — GET /orders/{id} found
-  @critical
-  Scenario: IC-04 - Obtener pedido por ID existente retorna 200
-    Given existe un pedido con id=1 en el repositorio
-    When se envía GET a "/orders/1"
-    Then el status de respuesta debe ser 200 OK
-    And el body debe contener el pedido con id=1
-
-  # Cubre: controller 0% — GET /orders/{id} not found
-  @critical
-  Scenario: IC-05 - Obtener pedido por ID inexistente retorna 404
-    Given no existe pedido con id=999
-    When se envía GET a "/orders/999"
-    Then el status de respuesta debe ser 404 Not Found
-    And el body debe contener mensaje de error
-
-  # Cubre: controller 0% — GET /orders list active
+  # Cubre: UserJpaPersistence - findByActiveTrue query
   @high
-  Scenario: IC-06 - Listar pedidos activos retorna lista
-    Given existen 3 pedidos activos en el repositorio
-    When se envía GET a "/orders"
-    Then el status de respuesta debe ser 200 OK
-    And el body debe contener 3 pedidos
+  Scenario: Obtener solo usuarios activos excluye inactivos
+    Given un usuario activo y un usuario inactivo guardados
+    When se invoca findAllActive()
+    Then solo el usuario activo debe retornarse
+```
 
-  # Cubre: controller 0% — GET /orders empty
+#### Feature: PersistenceConfig Integration
+
+```gherkin
+Feature: Configuración de persistencia condicional
+  Como sistema de configuración
+  Quiero configurar la persistencia según el entorno
+  Para soportar JSON en desarrollo y PostgreSQL en producción
+
+  # Cubre: PersistenceConfig 68% - bean condicional
   @high
-  Scenario: IC-07 - Listar pedidos sin datos retorna lista vacía
-    Given no existen pedidos activos
-    When se envía GET a "/orders"
-    Then el status de respuesta debe ser 200 OK
-    And el body debe ser una lista vacía
+  Scenario: Crear bean de persistencia JSON cuando JPA no está disponible
+    Given el perfil "test-no-jpa" activo
+    And UserJpaRepository NO disponible
+    When el contexto de Spring se inicializa
+    Then debe crearse un UserRepository bean
+    And debe envolverse en CachedUserPersistenceDecorator
 
-  # Cubre: controller 0% — GET /orders/user/{userId}
+  # Cubre: PersistenceConfig - con JPA disponible
   @high
-  Scenario: IC-08 - Listar pedidos por usuario retorna filtrado
-    Given existen pedidos para userId=5
-    When se envía GET a "/orders/user/5"
-    Then el status de respuesta debe ser 200 OK
-    And todos los pedidos deben tener idUser=5
+  Scenario: Usar JPA persistence cuando JpaRepository disponible
+    Given el perfil "default" activo
+    And UserJpaRepository disponible
+    When el contexto de Spring se inicializa
+    Then UserJpaPersistence debe ser el bean primario
 
-  # Cubre: controller 0% — GET /orders/all
+  # Cubre: UserPersistenceFactory - selección de estrategia
   @medium
-  Scenario: IC-09 - Listar todos los pedidos (admin) incluye inactivos
-    Given existen pedidos activos e inactivos
-    When se envía GET a "/orders/all"
-    Then el status de respuesta debe ser 200 OK
-    And el body debe incluir pedidos con active=false
-
-  # Cubre: controller 0% — DELETE /orders/{id} success
-  @critical
-  Scenario: IC-10 - Eliminar pedido (soft-delete) retorna 204
-    Given existe un pedido con id=1
-    When se envía DELETE a "/orders/1"
-    Then el status de respuesta debe ser 204 No Content
-    And el pedido debe tener active=false
-
-  # Cubre: controller 0% — DELETE /orders/{id} not found
-  @high
-  Scenario: IC-11 - Eliminar pedido inexistente retorna 404
-    Given no existe pedido con id=999
-    When se envía DELETE a "/orders/999"
-    Then el status de respuesta debe ser 404 Not Found
-
-  # Cubre: controller 0% — PATCH /orders/{id} success
-  @high
-  Scenario: IC-12 - Cambiar estado de pedido retorna 200
-    Given existe un pedido con id=1 y state=PROCESSING
-    And un OrderStateUpdateDto con state=DELIVERED
-    When se envía PATCH a "/orders/1" con el DTO
-    Then el status de respuesta debe ser 200 OK
-    And el pedido debe tener state=DELIVERED
-
-  # Cubre: controller 0% — GET /orders/{id}/user enriched
-  @high
-  Scenario: IC-13 - Obtener pedido con información de usuario
-    Given existe un pedido con id=1 y idUser=10
-    And el servicio de usuario retorna datos para userId=10
-    When se envía GET a "/orders/1/user"
-    Then el status de respuesta debe ser 200 OK
-    And el body debe ser OrderWithUserDto con datos de usuario
+  Scenario: Factory selecciona implementación correcta
+    Given múltiples implementaciones de IUserPersistence disponibles
+    When se solicita el bean IUserPersistence
+    Then debe retornarse el decorador de caché envolviendo la implementación primaria
 ```
 
-#### Feature: GlobalExceptionHandler - Manejo de errores HTTP
+#### Feature: UserRepository JSON File Integration
 
 ```gherkin
-Feature: GlobalExceptionHandler - HTTP Error Handling
-  As an API consumer
-  I want consistent error responses
-  So that I can handle errors predictably
+Feature: Integración de persistencia JSON con sistema de archivos
+  Como sistema legacy
+  Quiero persistir en archivos JSON reales
+  Para validar lectura/escritura en disco
 
   Background:
-    Given el GlobalExceptionHandler está configurado
-    And MockMvc está disponible
+    Given un directorio temporal para tests
+    And un archivo users.json vacío
 
-  # Cubre: GlobalExceptionHandler 0% — OrderNotFoundException
-  @critical
-  Scenario: EH-01 - OrderNotFoundException retorna 404 con ErrorResponse
-    Given el servicio lanza OrderNotFoundException("Pedido con ID 999 no encontrado")
-    When se procesa la excepción
-    Then el status debe ser 404
-    And el error debe ser "Not Found"
-    And el message debe contener "999"
-
-  # Cubre: GlobalExceptionHandler 0% — IllegalArgumentException
+  # Cubre: UserRepository - writeToFile crea directorio padre
   @high
-  Scenario: EH-02 - IllegalArgumentException retorna 400 con ErrorResponse
-    Given el servicio lanza IllegalArgumentException("Parámetro inválido")
-    When se procesa la excepción
-    Then el status debe ser 400
-    And el error debe ser "Bad Request"
+  Scenario: Escribir archivo crea directorios padre si no existen
+    Given filePath apunta a "/tmp/test/nested/users.json"
+    And el directorio "/tmp/test/nested" NO existe
+    When se ejecuta writeToFile()
+    Then el directorio debe ser creado
+    And el archivo debe ser escrito
 
-  # Cubre: GlobalExceptionHandler 0% — MethodArgumentNotValidException
-  @critical
-  Scenario: EH-03 - Validación fallida retorna 400 con errores específicos
-    Given una request con campos inválidos (name="", idUser=null)
-    When se envía POST a crear orden
-    Then el status debe ser 400
-    And el error debe ser "Validation Failed"
-    And validationErrors debe contener los campos inválidos
-
-  # Cubre: GlobalExceptionHandler 0% — HttpMessageNotReadableException
-  @high
-  Scenario: EH-04 - JSON malformado retorna 400
-    Given un body con JSON inválido
-    When se envía POST a "/orders"
-    Then el status debe ser 400
-    And el message debe ser "Request body is missing or malformed"
-
-  # Cubre: GlobalExceptionHandler 0% — OrderCreationException
-  @high
-  Scenario: EH-05 - Error de creación retorna 500
-    Given el servicio lanza OrderCreationException("Failed to persist order")
-    When se procesa la excepción
-    Then el status debe ser 500
-    And el error debe ser "Internal Server Error"
-
-  # Cubre: GlobalExceptionHandler 0% — Generic Exception
+  # Cubre: UserRepository - init() con archivo corrupto
   @medium
-  Scenario: EH-06 - Excepción genérica retorna 500
-    Given el servicio lanza RuntimeException("Unexpected error")
-    When se procesa la excepción
-    Then el status debe ser 500
-    And el message debe ser "An unexpected error occurred"
-```
+  Scenario: Inicialización con JSON corrupto crea nuevo archivo
+    Given un archivo users.json con contenido inválido "{invalid"
+    When se ejecuta initialize()
+    Then el error debe ser logueado
+    And un nuevo archivo vacío debe ser creado
 
-#### Feature: Messaging - RabbitMQ Integration
-
-```gherkin
-Feature: RabbitMQ Messaging Components
-  As a messaging system
-  I want to send and receive user info requests/responses
-  So that orders can be enriched asynchronously
-
-  Background:
-    Given RabbitMQ está mockeado con @MockBean RabbitTemplate
-    And los componentes de mensajería están configurados
-
-  # Cubre: UserServiceProducer 0% — requestUserInfo
-  @critical
-  Scenario: MSG-01 - Enviar solicitud de información de usuario
-    Given un UserServiceProducer con RabbitTemplate mockeado
-    When se invoca producer.requestUserInfo(userId=10)
-    Then rabbitTemplate.convertAndSend debe ser invocado
-    And el exchange debe ser "user-exchange"
-    And el routing key debe ser "user.request"
-    And el payload debe ser UserRequest con userId=10
-
-  # Cubre: UserServiceConsumer 0% — receiveUserResponse
-  @critical
-  Scenario: MSG-02 - Recibir respuesta de usuario via listener
-    Given un UserServiceConsumer con cache mockeado
-    And un UserResponse(id=10, name="John")
-    When se invoca consumer.receiveUserResponse(userResponse)
-    Then cache.store debe ser invocado con el UserResponse
-
-  # Cubre: UserServiceConsumer 0% — getUserResponse delegation
+  # Cubre: UserRepository - persistencia completa CRUD
   @high
-  Scenario: MSG-03 - Obtener respuesta delegando a cache
-    Given un UserServiceConsumer con cache mockeado
-    And cache.awaitResponse retorna UserResponse
-    When se invoca consumer.getUserResponse(10, 3000)
-    Then debe retornar el UserResponse del cache
-
-  # Cubre: RabbitMQUserInfoClient 0% — fetchUserInfo orchestration
-  @critical
-  Scenario: MSG-04 - Orquestar solicitud y espera de respuesta
-    Given un RabbitMQUserInfoClient con producer y consumer mockeados
-    And consumer.getUserResponse retorna UserResponse
-    When se invoca client.fetchUserInfo(10, 3000)
-    Then producer.requestUserInfo(10) debe ser invocado
-    And consumer.getUserResponse(10, 3000) debe ser invocado
-    And debe retornar el UserResponse
-
-  # Cubre: RabbitMQUserInfoClient 0% — fetchUserInfo error handling
-  @high
-  Scenario: MSG-05 - Manejar error en orquestación
-    Given un RabbitMQUserInfoClient con producer que lanza excepción
-    When se invoca client.fetchUserInfo(10, 3000)
-    Then debe retornar null
-    And debe logear advertencia
-```
-
-#### Feature: Integration Flow - Controller to Service to Repository
-
-```gherkin
-Feature: Full Integration Flow Tests
-  As a system
-  I want end-to-end integration between components
-  So that the full request lifecycle works correctly
-
-  Background:
-    Given @SpringBootTest con H2 in-memory database
-    And RabbitMQ deshabilitado via spring.autoconfigure.exclude
-    And el contexto de Spring está inicializado
-
-  # Cubre: Flujo completo Controller → Service → Repository
-  @critical
-  Scenario: FLOW-01 - Crear y recuperar pedido end-to-end
-    Given la base de datos está vacía
-    When se crea un pedido con name="E2E Test", idUser=1
-    And se obtiene el pedido por su ID generado
-    Then el pedido recuperado debe tener name="E2E Test"
-    And state=PROCESSING
-    And active=true
-
-  # Cubre: Flujo de soft-delete
-  @high
-  Scenario: FLOW-02 - Soft-delete no aparece en listado activo
-    Given existe un pedido activo con id=1
-    When se elimina el pedido con id=1 (soft-delete)
-    And se listan los pedidos activos
-    Then el pedido con id=1 no debe aparecer en la lista
-
-  # Cubre: Flujo de cambio de estado
-  @high
-  Scenario: FLOW-03 - Transición de estados completa
-    Given existe un pedido con state=PROCESSING
-    When se cambia el estado a TRAVELING_TO_WAREHOUSE
-    And se cambia el estado a DELIVERED
-    Then el pedido debe tener state=DELIVERED
+  Scenario: Ciclo completo de operaciones CRUD persiste correctamente
+    When se crea un usuario
+    And se actualiza el usuario
+    And se reinicializa el repositorio
+    Then el usuario debe mantener los cambios actualizados
 ```
 
 ---
 
 ## 7. Priorización por Cobertura (JaCoCo-driven)
 
-### 7.1 Análisis de Brechas
+| Prioridad | Clase | Cobertura Actual | Instrucciones Perdidas | Tipo de Prueba | Escenarios |
+|-----------|-------|-----------------|----------------------|----------------|------------|
+| 🔴 CRÍTICO | `CachedUserPersistenceDecorator` | 50% | 150 | Unitaria | 9 |
+| 🔴 CRÍTICO | `UserJpaPersistence` | 60% | 114 | Unitaria + Integración | 7 |
+| 🟠 ALTO | `UserRepository` | 76% | 107 | Unitaria + Integración | 8 |
+| 🟠 ALTO | `UsuarioMapper` | 51% | 41 | Unitaria | 6 |
+| 🟠 ALTO | `UserServiceProducer` | 20% | 12 | Unitaria | 2 |
+| 🟡 MEDIO | `StrictValidationStrategy` | 91% | 23 | Unitaria | 6 |
+| 🟡 MEDIO | `PersistenceConfig` | 68% | 21 | Integración | 3 |
+| 🟡 MEDIO | `UsuarioService` | 94% | 17 | Unitaria | 4 |
+| 🟢 BAJO | `LenientValidationStrategy` | 95% | 5 | Unitaria | 2 |
+| 🟢 BAJO | `UsuarioNotFoundException` | ~44% | 5 | Unitaria | 1 |
+| 🟢 BAJO | `UsuarioYaExisteException` | ~44% | 5 | Unitaria | 1 |
 
-| Prioridad | Paquete/Clase | Cobertura Actual | Inst. Missed | Tipo Prueba | Escenarios |
-|-----------|---------------|------------------|--------------|-------------|------------|
-| 🔴 CRÍTICO | `GlobalExceptionHandler` | 0% | 212 | Integración | 6 |
-| 🔴 CRÍTICO | `OrderController` | 0% | 76 | Integración | 13 |
-| 🟡 ALTO | `UserResponseCache` | 0% | 86 | Unitaria | 5 |
-| 🟡 ALTO | `ErrorResponse` + `Builder` | 0% | 119 | Unitaria | 2 |
-| 🟡 ALTO | `OrderEnrichmentFacade` | 6.7% | 56 | Unitaria | 3 |
-| 🟡 ALTO | `OrderMapper` | 0% | 43 | Unitaria | 4 |
-| 🟡 ALTO | `RabbitMQUserInfoClient` | 0% | 33 | Unitaria | 2 |
-| 🟡 ALTO | `UserServiceProducer` | 0% | 27 | Integración | 1 |
-| 🟡 ALTO | `UserServiceConsumer` | 0% | 25 | Integración | 2 |
-| 🟢 MEDIO | `OrderWithUserDto` | 47.9% | 49 | Unitaria | 1 |
-| 🟢 MEDIO | `UserEnrichmentService` | 16% | 21 | Unitaria | 2 |
-| 🟢 MEDIO | `UserRequest` | 0% | 20 | Unitaria | 1 |
-| 🟢 MEDIO | `OrderStateUpdateDto` | 0% | 16 | Unitaria | 2 |
-| 🟢 MEDIO | `UserResponse` | 37.5% | 35 | Unitaria | 1 |
+### Ganancia Estimada de Cobertura por Grupo de Tests
 
-**Total instrucciones faltantes priorizadas:** ~818
+| Grupo de Tests | Clases Afectadas | Ganancia Estimada |
+|----------------|------------------|-------------------|
+| CachedUserPersistenceDecorator tests | `CachedUserPersistenceDecorator` | +5-6% global |
+| UserJpaPersistence tests | `UserJpaPersistence` | +4-5% global |
+| UserRepository tests | `UserRepository` | +3-4% global |
+| UsuarioMapper tests | `UsuarioMapper` | +1-2% global |
+| UserServiceProducer tests | `UserServiceProducer` | +0.5% global |
+| Validation tests (edge cases) | `StrictValidationStrategy`, `LenientValidationStrategy` | +1% global |
 
-### 7.2 Ganancia Estimada de Cobertura
-
-| Grupo de Tests | Instrucciones Cubiertas | Ganancia Estimada |
-|----------------|-------------------------|-------------------|
-| Controller tests (`@WebMvcTest`) | ~76 | +5% |
-| Exception Handler tests | ~212 | +14% |
-| Mapper tests (Unitarios) | ~43 | +3% |
-| Cache + Messaging tests | ~171 | +11% |
-| Enrichment facade/service tests | ~77 | +5% |
-| DTO tests | ~139 | +9% |
-| Integration flow tests | ~50 (incrementales) | +3% |
-
-**Total ganancia estimada:** ~50% adicional → Cobertura final proyectada: **~75%**
+**Total estimado:** +14-18% cobertura adicional → Meta 90%+ alcanzable
 
 ---
 
@@ -683,116 +781,123 @@ Feature: Full Integration Flow Tests
 ### 8.1 Registro de Riesgos
 
 | ID | Riesgo | Probabilidad | Impacto | Severidad | Mitigación |
-|----|--------|--------------|---------|-----------|------------|
-| R01 | Tests pasan localmente pero fallan en CI por RabbitMQ | Alta | Alto | 🔴 Alto | `spring.autoconfigure.exclude=RabbitAutoConfiguration` |
-| R02 | Tests de integración lentos por contexto Spring | Media | Medio | 🟡 Medio | Usar `@WebMvcTest` en vez de `@SpringBootTest` donde posible |
-| R03 | Contaminación de estado de BD entre tests | Media | Alto | 🔴 Alto | `@Transactional` + `@Rollback` + H2 in-memory |
-| R04 | Meta de cobertura no alcanzada | Media | Alto | 🔴 Alto | Priorizar escenarios CRÍTICOS primero |
-| R05 | Mocks incorrectos no detectan bugs reales | Media | Alto | 🔴 Alto | Combinar tests unitarios con tests de integración |
-| R06 | `UserResponseCache` concurrencia difícil de testear | Alta | Medio | 🟡 Medio | Tests con threads controlados, timeouts cortos |
-| R07 | Cambios en DTOs rompen serialización | Media | Alto | 🔴 Alto | Tests de serialización JSON explícitos |
+|----|--------|-------------|---------|-----------|------------|
+| R01 | Tests pasan local pero fallan en CI por variables de entorno faltantes (`USERS_FILE`) | Media | Alto | 🔴 Alto | Usar `@TestPropertySource` con `application-test.properties` |
+| R02 | ConcurrentHashMap en caché genera race conditions en tests paralelos | Media | Alto | 🔴 Alto | Ejecutar tests de `CachedUserPersistenceDecorator` en modo single-thread |
+| R03 | Archivo JSON se corrompe durante tests concurrentes | Alta | Medio | 🟡 Medio | Usar `@TempDir` de JUnit 5 para aislamiento de archivos |
+| R04 | Tests de integración JPA fallan por schema incompatible | Media | Alto | 🔴 Alto | Usar H2 con modo PostgreSQL (`MODE=PostgreSQL`) |
+| R05 | Validadores con regex complejos timeout en edge cases | Baja | Medio | 🟡 Medio | Agregar timeout a tests de validación con `@Timeout(5)` |
+| R06 | Meta de cobertura no alcanzada por código inalcanzable | Media | Medio | 🟡 Medio | Documentar código muerto, considerar refactoring |
+| R07 | `UserServiceProducer` no testeado correctamente sin RabbitMQ | Alta | Alto | 🔴 Alto | Usar `@MockBean RabbitTemplate` para tests unitarios |
+| R08 | Efectos secundarios brownfield de `writeToFile()` corrompen datos | Media | Alto | 🔴 Alto | Aislar con `@TempDir`, nunca usar archivo de producción |
 
 ### 8.2 Estrategia de Respuesta a Riesgos
 
-- **R01:** Configurar `application-test.yml` excluyendo RabbitMQ auto-configuration
-- **R02:** Separar tests `@WebMvcTest` (controller) de `@SpringBootTest` (full integration)
-- **R03:** Usar perfil `test` con H2, cada test en transacción con rollback
-- **R04:** Ejecutar primero: `GlobalExceptionHandler` + `OrderController` = +19% cobertura
-- **R05:** Mantener proporción 60% unitarias / 40% integración
-- **R06:** Usar `CountDownLatch` y timeouts < 500ms en tests de cache
-- **R07:** Agregar tests de serialización/deserialización con ObjectMapper
+| ID | Estrategia |
+|----|------------|
+| **R01** | Agregar `src/test/resources/application-test.properties` con `users.persistence.file=${java.io.tmpdir}/test-users.json` |
+| **R02** | Anotar tests de caché con `@Execution(ExecutionMode.SAME_THREAD)` |
+| **R03** | Usar `@TempDir Path tempDir` en cada test y crear archivo fresco |
+| **R04** | Configurar H2 en `application-test.properties` con `spring.datasource.url=jdbc:h2:mem:testdb;MODE=PostgreSQL` |
+| **R05** | Agregar `@Timeout(value = 5, unit = TimeUnit.SECONDS)` a tests de regex |
+| **R06** | Marcar código inalcanzable con `// NOSONAR` o refactorizar para eliminar |
+| **R07** | Crear `UserServiceProducerTest` con `@MockBean RabbitTemplate` |
+| **R08** | Nunca usar ruta de archivo real en tests; siempre `@TempDir` |
 
 ### 8.3 Umbrales de Riesgo por Cobertura
 
-| Umbral | Acción |
-|--------|--------|
-| < 50% | 🔴 Pipeline bloqueado — release no permitido |
-| 50%–69% | 🟡 Advertencia — requiere aprobación manual |
-| ≥80% | ✅ Aceptable — CI/CD continúa |
+| Rango de Cobertura | Estado | Acción |
+|--------------------|--------|--------|
+| < 50% | 🔴 Pipeline bloqueado | Acción inmediata requerida - no merge |
+| 50% - 69% | 🟠 Warning | Sprint debt - debe mejorar antes de release |
+| 70% - 84% | 🟡 Aceptable | Mantener, mejorar incrementalmente |
+| 85%+ | 🟢 Óptimo | Mantener, focus en branches |
 
 ---
 
 ## 9. Calendario de Pruebas
 
-| Fase | Actividad | Esfuerzo Est. | Prioridad |
-|------|-----------|---------------|-----------|
-| **Fase 1** | Tests unitarios: `OrderMapper`, `UserResponseCache` | 2-3h | 🔴 Crítica |
-| **Fase 2** | Tests integración: `OrderController` (`@WebMvcTest`) | 3-4h | 🔴 Crítica |
-| **Fase 3** | Tests integración: `GlobalExceptionHandler` | 2-3h | 🔴 Crítica |
-| **Fase 4** | Tests unitarios: `OrderEnrichmentFacade`, `UserEnrichmentService` | 2h | 🟡 Alta |
-| **Fase 5** | Tests unitarios: Messaging components | 2h | 🟡 Alta |
-| **Fase 6** | Tests unitarios: DTOs (`ErrorResponse`, etc.) | 1-2h | 🟢 Media |
-| **Fase 7** | Tests integración: Full flow (`@SpringBootTest`) | 2h | 🟢 Media |
-| **Fase 8** | Ejecución completa + análisis JaCoCo | 30min | — |
+| Fase | Actividad | Clases Target | Esfuerzo Estimado | Responsable |
+|------|-----------|---------------|-------------------|-------------|
+| **Fase 1** | Tests unitarios `CachedUserPersistenceDecorator` | `CachedUserPersistenceDecorator` | 3-4h | Dev/QA |
+| **Fase 2** | Tests unitarios + integración `UserJpaPersistence` | `UserJpaPersistence` | 3-4h | Dev/QA |
+| **Fase 3** | Tests unitarios `UserRepository` (JSON) | `UserRepository` | 2-3h | Dev/QA |
+| **Fase 4** | Tests unitarios `UsuarioMapper` | `UsuarioMapper` | 1-2h | Dev/QA |
+| **Fase 5** | Tests unitarios `UserServiceProducer` | `UserServiceProducer` | 1h | Dev/QA |
+| **Fase 6** | Tests edge cases `StrictValidationStrategy` | `StrictValidationStrategy` | 1h | Dev/QA |
+| **Fase 7** | Tests integración `PersistenceConfig` | `PersistenceConfig`, `UserPersistenceFactory` | 2h | Dev/QA |
+| **Fase 8** | Tests `UsuarioService` branches faltantes | `UsuarioService` | 1h | Dev/QA |
+| **Fase 9** | Ejecución suite completa + reporte cobertura | Todos | 30min | Dev/QA |
+| **Fase 10** | Análisis de brechas y ajustes finales | Todos | 1-2h | QA |
 
-**Esfuerzo total estimado:** 15-19 horas
+**Esfuerzo total estimado:** 16-20 horas
 
 ---
 
 ## 10. Herramientas y Entorno
 
-| Herramienta | Propósito | Configuración |
-|-------------|-----------|---------------|
-| JUnit 5 | Framework de pruebas | Via Spring Boot Starter Test |
-| Mockito | Framework de mocking | Via Spring Boot Starter Test |
-| MockMvc | Testing capa HTTP | `@WebMvcTest(OrderController.class)` |
-| `@MockBean` | Mocking de beans Spring | Para Repository, RabbitTemplate |
-| H2 Database | BD in-memory para tests | `spring.datasource.url=jdbc:h2:mem:testdb` |
-| JaCoCo | Reporte de cobertura | Plugin Maven configurado |
-| AssertJ | Assertions fluidas | Opcional, mejora legibilidad |
+| Herramienta | Propósito | Versión |
+|-------------|-----------|---------|
+| **JUnit 5** | Framework de pruebas | 5.x (via Spring Boot 3.x) |
+| **Mockito** | Framework de mocking | Latest (via Spring Boot) |
+| **MockMvc** | Testing capa HTTP | Via `@WebMvcTest` |
+| **@DataJpaTest** | Testing capa repositorio | Via Spring Boot Test |
+| **H2 Database** | Base de datos en memoria para tests | 2.x |
+| **JaCoCo** | Reporte de cobertura | 0.8.11 |
+| **AssertJ** | Aserciones fluentes | Latest |
+| **@TempDir** | Aislamiento de archivos | JUnit 5 |
+| **Testcontainers** | PostgreSQL/RabbitMQ reales (opcional) | 1.19.x |
 
-### Configuración de Test Profile
+### Configuración de Entorno de Tests
 
-```yaml
-# application-test.yml
-spring:
-  datasource:
-    url: jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1
-    driver-class-name: org.h2.Driver
-  jpa:
-    hibernate:
-      ddl-auto: create-drop
-  autoconfigure:
-    exclude:
-      - org.springframework.boot.autoconfigure.amqp.RabbitAutoConfiguration
+**application-test.properties:**
+```properties
+# Database - H2 con modo PostgreSQL
+spring.datasource.url=jdbc:h2:mem:testdb;MODE=PostgreSQL;DB_CLOSE_DELAY=-1
+spring.jpa.hibernate.ddl-auto=create-drop
 
-pedido:
-  migration:
-    enabled: false
+# Archivo JSON para tests
+users.persistence.file=${java.io.tmpdir}/test-users.json
 
-user:
-  service:
-    timeout: 100
+# RabbitMQ deshabilitado en tests
+spring.rabbitmq.host=localhost
+spring.rabbitmq.port=5672
+
+# Logging reducido
+logging.level.root=WARN
+logging.level.com.example.usuarioservice=DEBUG
 ```
 
 ---
 
-## 11. Trazabilidad de Escenarios
+## 11. Trazabilidad Escenarios → Brechas de Cobertura
 
-| ID Escenario | Criterio/Brecha | Técnica Aplicada | Tipo Test |
-|--------------|-----------------|------------------|-----------|
-| IC-01 | controller 0%, POST 201 | Partición Equivalencia | Integración |
-| IC-02 | controller 0%, Validación | Partición Inválida | Integración |
-| IC-04, IC-05 | controller 0%, GET by ID | Partición Válida/Inválida | Integración |
-| EH-01 to EH-06 | GlobalExceptionHandler 0% | Tabla Decisión | Integración |
-| UM-01 to UM-04 | mapper 0% | Partición + Límite | Unitaria |
-| UC-01 to UC-05 | UserResponseCache 0% | Partición + Límite | Unitaria |
-| MSG-01 to MSG-05 | messaging 0% | Partición | Integración |
-| UE-01 to UE-03 | OrderEnrichmentFacade 6.7% | Partición | Unitaria |
-| DTO-01 to DTO-06 | DTOs 0-47% | Partición | Unitaria |
-
----
-
-## 12. Criterios de Éxito
-
-| Métrica | Valor Objetivo |
-|---------|----------------|
-| Cobertura de instrucciones | ≥80% |
-| Cobertura de branches | ≥60% |
-| Tests pasando | 100% |
-| Tiempo de ejecución total | < 60 segundos |
-| Escenarios CRÍTICOS implementados | 100% |
+| Escenario | Brecha de Cobertura | Instrucciones Recuperables |
+|-----------|---------------------|---------------------------|
+| `findById_cachedUser_returnsFromCache` | CachedUserPersistenceDecorator L63-72 | ~15 |
+| `findByEmail_nullEmail_returnsNull` | CachedUserPersistenceDecorator L74-75 | ~8 |
+| `update_invalidatesOldAndNewCache` | CachedUserPersistenceDecorator L103-120 | ~25 |
+| `partialUpdate_userNotInCache_noInvalidation` | CachedUserPersistenceDecorator L122-140 | ~20 |
+| `deleteById_invalidatesCache` | CachedUserPersistenceDecorator L156-170 | ~15 |
+| `update_existingUser_updatesAllFields` | UserJpaPersistence L71-82 | ~30 |
+| `partialUpdate_activeAsBoolean_parsesCorrectly` | UserJpaPersistence L117-125 | ~15 |
+| `toUser_nullRequest_returnsNull` | UsuarioMapper L19-21 | ~8 |
+| `toUserUpdate_partialFields_updatesOnlyProvided` | UsuarioMapper L35-55 | ~20 |
+| `sendUserCreatedMessage` | UserServiceProducer L20-35 | ~12 |
 
 ---
 
-**Fin del documento TEST_PLAN.md**
+## 12. Criterios de Aceptación del Plan
+
+| Criterio | Descripción | Métrica |
+|----------|-------------|---------|
+| **Cobertura Mínima** | Alcanzar meta de cobertura | ≥70% instrucciones, ≥70% branches |
+| **Tests Ejecutables** | Todos los escenarios Gherkin implementados como tests JUnit | 100% implementación |
+| **Sin Regresiones** | Tests existentes continúan pasando | 0 tests rotos |
+| **CI/CD Verde** | Pipeline completo sin errores | Build exitoso |
+| **Documentación** | Cada test tiene comentario de trazabilidad | 100% documentados |
+
+---
+
+*Documento generado: 1 de marzo de 2026*
+*Próxima revisión: Post-implementación de Fase 1*

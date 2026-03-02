@@ -371,7 +371,7 @@ VITE_APIORDER=http://localhost:8082 # URL pedido-service
 |----------|---------------|-----------|-------------|----------|
 | **pedido-service** | 34 | 26 | 8 | 70%+ ✅ |
 | **usuario-service** | 20 | 4 | 16 | 50%+ ⚠️ |
-| **frontend** | 15 | 15 | 2 | 80%+ ✅ |
+| **frontend** | 15 | 15 | 2 | 70%+ ✅ |
 
 ### Estrategia de Testing
 
