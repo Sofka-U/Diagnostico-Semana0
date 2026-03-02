@@ -23,7 +23,7 @@ public class OrderController {
      * - GET /orders : list active orders; supports optional query `userId` to filter results
      * - GET /orders/{id} : get order by id
      * - GET /orders/{id}?expand=user : get order with enriched user info
-     * - DELETE /orders/{id} : delete an order (soft-delete: sets active=false)
+     * - PATCH /orders/{id}/deactivate : deactivate an order (soft-delete: sets active=false)
      * - PATCH /orders/{id} : change order state
      *
      * The controller delegates business logic to `OrderService` and converts
@@ -55,9 +55,9 @@ public class OrderController {
     }
 
     /**
-        * Soft-delete an order by ID.
+        * Deactivate (soft-delete) an order by ID.
         *
-        * Endpoint: DELETE /orders/{id}
+        * Endpoint: PATCH /orders/{id}/deactivate
         * <p>
         * Performs a soft delete by setting `active=false`. On success returns
         * HTTP 204 No Content. If the order does not exist returns HTTP 404 Not Found.
@@ -65,8 +65,8 @@ public class OrderController {
         * @param id Order ID
         * @return 204 No Content or 404 Not Found
      */
-    @DeleteMapping("/{id}")
-    public ResponseEntity<Void> deleteOrder(@PathVariable("id") Integer id) {
+    @PatchMapping("/{id}/deactivate")
+    public ResponseEntity<Void> deactivateOrder(@PathVariable("id") Integer id) {
         orderService.deleteOrder(id);
         return ResponseEntity.noContent().build();
     }

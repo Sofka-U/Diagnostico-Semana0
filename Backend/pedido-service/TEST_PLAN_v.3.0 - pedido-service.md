@@ -97,9 +97,165 @@ El servicio `pedido-service` gestiona órdenes de compra con persistencia Postgr
 
 ---
 
-## 5. Aplicación de Técnicas de Diseño
+## 5. Herramientas y Entorno
 
-### 5.1 Partición de Equivalencia
+| Herramienta | Propósito | Configuración |
+|-------------|-----------|---------------|
+| JUnit 5 | Framework de pruebas | Via Spring Boot Starter Test |
+| Mockito | Framework de mocking | Via Spring Boot Starter Test |
+| MockMvc | Testing capa HTTP | `@WebMvcTest(OrderController.class)` |
+| `@MockBean` | Mocking de beans Spring | Para Repository, RabbitTemplate |
+| H2 Database | BD in-memory para tests | `spring.datasource.url=jdbc:h2:mem:testdb` |
+| JaCoCo | Reporte de cobertura | Plugin Maven configurado |
+| AssertJ | Assertions fluidas | Opcional, mejora legibilidad |
+
+### Configuración de Test Profile
+
+```yaml
+# application-test.yml
+spring:
+  datasource:
+    url: jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1
+    driver-class-name: org.h2.Driver
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.amqp.RabbitAutoConfiguration
+
+pedido:
+  migration:
+    enabled: false
+
+user:
+  service:
+    timeout: 100
+```
+
+---
+
+## 6. Calendario de Pruebas
+
+| Fase | Actividad | Esfuerzo Est. | Prioridad |
+|------|-----------|---------------|-----------|
+| **Fase 1** | Tests unitarios: `OrderMapper`, `UserResponseCache` | 2-3h | 🔴 Crítica |
+| **Fase 2** | Tests integración: `OrderController` (`@WebMvcTest`) | 3-4h | 🔴 Crítica |
+| **Fase 3** | Tests integración: `GlobalExceptionHandler` | 2-3h | 🔴 Crítica |
+| **Fase 4** | Tests unitarios: `OrderEnrichmentFacade`, `UserEnrichmentService` | 2h | 🟡 Alta |
+| **Fase 5** | Tests unitarios: Messaging components | 2h | 🟡 Alta |
+| **Fase 6** | Tests unitarios: DTOs (`ErrorResponse`, etc.) | 1-2h | 🟢 Media |
+| **Fase 7** | Tests integración: Full flow (`@SpringBootTest`) | 2h | 🟢 Media |
+| **Fase 8** | Ejecución completa + análisis JaCoCo | 30min | — |
+
+**Esfuerzo total estimado:** 15-19 horas
+
+---
+
+## 7. Gestión de Riesgos
+
+### 7.1 Registro de Riesgos
+
+| ID | Riesgo | Probabilidad | Impacto | Severidad | Mitigación |
+|----|--------|--------------|---------|-----------|------------|
+| R01 | Tests pasan localmente pero fallan en CI por RabbitMQ | Alta | Alto | 🔴 Alto | `spring.autoconfigure.exclude=RabbitAutoConfiguration` |
+| R02 | Tests de integración lentos por contexto Spring | Media | Medio | 🟡 Medio | Usar `@WebMvcTest` en vez de `@SpringBootTest` donde posible |
+| R03 | Contaminación de estado de BD entre tests | Media | Alto | 🔴 Alto | `@Transactional` + `@Rollback` + H2 in-memory |
+| R04 | Meta de cobertura no alcanzada | Media | Alto | 🔴 Alto | Priorizar escenarios CRÍTICOS primero |
+| R05 | Mocks incorrectos no detectan bugs reales | Media | Alto | 🔴 Alto | Combinar tests unitarios con tests de integración |
+| R06 | `UserResponseCache` concurrencia difícil de testear | Alta | Medio | 🟡 Medio | Tests con threads controlados, timeouts cortos |
+| R07 | Cambios en DTOs rompen serialización | Media | Alto | 🔴 Alto | Tests de serialización JSON explícitos |
+
+### 7.2 Estrategia de Respuesta a Riesgos
+
+- **R01:** Configurar `application-test.yml` excluyendo RabbitMQ auto-configuration
+- **R02:** Separar tests `@WebMvcTest` (controller) de `@SpringBootTest` (full integration)
+- **R03:** Usar perfil `test` con H2, cada test en transacción con rollback
+- **R04:** Ejecutar primero: `GlobalExceptionHandler` + `OrderController` = +19% cobertura
+- **R05:** Mantener proporción 60% unitarias / 40% integración
+- **R06:** Usar `CountDownLatch` y timeouts < 500ms en tests de cache
+- **R07:** Agregar tests de serialización/deserialización con ObjectMapper
+
+### 7.3 Umbrales de Riesgo por Cobertura
+
+| Umbral | Acción |
+|--------|--------|
+| < 50% | 🔴 Pipeline bloqueado — release no permitido |
+| 50%–69% | 🟡 Advertencia — requiere aprobación manual |
+| ≥70% | ✅ Aceptable — CI/CD continúa |
+
+---
+
+## 8. Priorización por Cobertura (JaCoCo-driven)
+
+### 8.1 Análisis de Brechas
+
+| Prioridad | Paquete/Clase | Cobertura Actual | Inst. Missed | Tipo Prueba | Escenarios |
+|-----------|---------------|------------------|--------------|-------------|------------|
+| 🔴 CRÍTICO | `GlobalExceptionHandler` | 0% | 212 | Integración | 6 |
+| 🔴 CRÍTICO | `OrderController` | 0% | 76 | Integración | 13 |
+| 🟡 ALTO | `UserResponseCache` | 0% | 86 | Unitaria | 5 |
+| 🟡 ALTO | `ErrorResponse` + `Builder` | 0% | 119 | Unitaria | 2 |
+| 🟡 ALTO | `OrderEnrichmentFacade` | 6.7% | 56 | Unitaria | 3 |
+| 🟡 ALTO | `OrderMapper` | 0% | 43 | Unitaria | 4 |
+| 🟡 ALTO | `RabbitMQUserInfoClient` | 0% | 33 | Unitaria | 2 |
+| 🟡 ALTO | `UserServiceProducer` | 0% | 27 | Integración | 1 |
+| 🟡 ALTO | `UserServiceConsumer` | 0% | 25 | Integración | 2 |
+| 🟢 MEDIO | `OrderWithUserDto` | 47.9% | 49 | Unitaria | 1 |
+| 🟢 MEDIO | `UserEnrichmentService` | 16% | 21 | Unitaria | 2 |
+| 🟢 MEDIO | `UserRequest` | 0% | 20 | Unitaria | 1 |
+| 🟢 MEDIO | `OrderStateUpdateDto` | 0% | 16 | Unitaria | 2 |
+| 🟢 MEDIO | `UserResponse` | 37.5% | 35 | Unitaria | 1 |
+
+**Total instrucciones faltantes priorizadas:** ~818
+
+### 8.2 Ganancia Estimada de Cobertura
+
+| Grupo de Tests | Instrucciones Cubiertas | Ganancia Estimada |
+|----------------|-------------------------|-------------------|
+| Controller tests (`@WebMvcTest`) | ~76 | +5% |
+| Exception Handler tests | ~212 | +14% |
+| Mapper tests (Unitarios) | ~43 | +3% |
+| Cache + Messaging tests | ~171 | +11% |
+| Enrichment facade/service tests | ~77 | +5% |
+| DTO tests | ~139 | +9% |
+| Integration flow tests | ~50 (incrementales) | +3% |
+
+**Total ganancia estimada:** ~50% adicional → Cobertura final proyectada: **~75%**
+
+---
+
+## 9. Trazabilidad de Escenarios
+
+| ID Escenario | Criterio/Brecha | Técnica Aplicada | Tipo Test |
+|--------------|-----------------|------------------|-----------|
+| IC-01 | controller 0%, POST 201 | Partición Equivalencia | Integración |
+| IC-02 | controller 0%, Validación | Partición Inválida | Integración |
+| IC-04, IC-05 | controller 0%, GET by ID | Partición Válida/Inválida | Integración |
+| EH-01 to EH-06 | GlobalExceptionHandler 0% | Tabla Decisión | Integración |
+| UM-01 to UM-04 | mapper 0% | Partición + Límite | Unitaria |
+| UC-01 to UC-05 | UserResponseCache 0% | Partición + Límite | Unitaria |
+| MSG-01 to MSG-05 | messaging 0% | Partición | Integración |
+| UE-01 to UE-03 | OrderEnrichmentFacade 6.7% | Partición | Unitaria |
+| DTO-01 to DTO-06 | DTOs 0-47% | Partición | Unitaria |
+
+---
+
+## 10. Criterios de Éxito
+
+| Métrica | Valor Objetivo |
+|---------|----------------|
+| Cobertura de instrucciones | ≥70% |
+| Cobertura de branches | ≥60% |
+| Tests pasando | 100% |
+| Tiempo de ejecución total | < 60 segundos |
+| Escenarios CRÍTICOS implementados | 100% |
+
+---
+
+## 11. Aplicación de Técnicas de Diseño
+
+### 11.1 Partición de Equivalencia
 
 | Campo | Partición | Tipo | Válida/Inválida | Escenario Mapeado |
 |-------|-----------|------|-----------------|-------------------|
@@ -120,7 +276,7 @@ El servicio `pedido-service` gestiona órdenes de compra con persistencia Postgr
 | `userId` timeout | Respuesta dentro de timeout | Tiempo | ✅ Válida | UC-04-01 |
 | `userId` timeout | Respuesta después de timeout | Tiempo | ❌ Inválida | UC-04-02 |
 
-### 5.2 Análisis de Valores Límite
+### 11.2 Análisis de Valores Límite
 
 | Campo | Mínimo | Máximo | Valores Límite | Escenario Mapeado |
 |-------|--------|--------|----------------|-------------------|
@@ -130,7 +286,7 @@ El servicio `pedido-service` gestiona órdenes de compra con persistencia Postgr
 | `timeout` (ms) | 0 | 3000 | 0, 1, 2999, 3000, 3001 | BVA-07, BVA-08 |
 | `userId` en cache | - | - | userId presente, userId ausente | BVA-09, BVA-10 |
 
-### 5.3 Tabla de Decisión - Creación de Orden
+### 11.3 Tabla de Decisión - Creación de Orden
 
 | Condición / Regla | R1 | R2 | R3 | R4 | R5 | R6 |
 |-------------------|----|----|----|----|----|----|
@@ -140,7 +296,7 @@ El servicio `pedido-service` gestiona órdenes de compra con persistencia Postgr
 | **Acción** | 201 Created | 400 Bad Request | 400 Bad Request | 400 Bad Request | 201 Created | 400 Bad Request |
 | **Escenario** | DT-01 | DT-02 | DT-03 | DT-04 | DT-01 | DT-05 |
 
-### 5.4 Tabla de Decisión - Manejo de Excepciones
+### 11.4 Tabla de Decisión - Manejo de Excepciones
 
 | Condición / Regla | R1 | R2 | R3 | R4 | R5 | R6 |
 |-------------------|----|----|----|----|----|----|
@@ -150,9 +306,9 @@ El servicio `pedido-service` gestiona órdenes de compra con persistencia Postgr
 
 ---
 
-## 6. Escenarios Gherkin
+## 12. Escenarios Gherkin
 
-### 6.1 Escenarios de Pruebas Unitarias
+### 12.1 Escenarios de Pruebas Unitarias
 
 #### Feature: OrderMapper - Conversión de entidades a DTOs
 
@@ -356,7 +512,7 @@ Feature: DTO Constructors and Accessors
     Then getValidationErrors() debe retornar el mapa
 ```
 
-### 6.2 Escenarios de Pruebas de Integración
+### 12.2 Escenarios de Pruebas de Integración
 
 #### Feature: OrderController - Endpoints REST
 
@@ -636,162 +792,6 @@ Feature: Full Integration Flow Tests
     And se cambia el estado a DELIVERED
     Then el pedido debe tener state=DELIVERED
 ```
-
----
-
-## 7. Priorización por Cobertura (JaCoCo-driven)
-
-### 7.1 Análisis de Brechas
-
-| Prioridad | Paquete/Clase | Cobertura Actual | Inst. Missed | Tipo Prueba | Escenarios |
-|-----------|---------------|------------------|--------------|-------------|------------|
-| 🔴 CRÍTICO | `GlobalExceptionHandler` | 0% | 212 | Integración | 6 |
-| 🔴 CRÍTICO | `OrderController` | 0% | 76 | Integración | 13 |
-| 🟡 ALTO | `UserResponseCache` | 0% | 86 | Unitaria | 5 |
-| 🟡 ALTO | `ErrorResponse` + `Builder` | 0% | 119 | Unitaria | 2 |
-| 🟡 ALTO | `OrderEnrichmentFacade` | 6.7% | 56 | Unitaria | 3 |
-| 🟡 ALTO | `OrderMapper` | 0% | 43 | Unitaria | 4 |
-| 🟡 ALTO | `RabbitMQUserInfoClient` | 0% | 33 | Unitaria | 2 |
-| 🟡 ALTO | `UserServiceProducer` | 0% | 27 | Integración | 1 |
-| 🟡 ALTO | `UserServiceConsumer` | 0% | 25 | Integración | 2 |
-| 🟢 MEDIO | `OrderWithUserDto` | 47.9% | 49 | Unitaria | 1 |
-| 🟢 MEDIO | `UserEnrichmentService` | 16% | 21 | Unitaria | 2 |
-| 🟢 MEDIO | `UserRequest` | 0% | 20 | Unitaria | 1 |
-| 🟢 MEDIO | `OrderStateUpdateDto` | 0% | 16 | Unitaria | 2 |
-| 🟢 MEDIO | `UserResponse` | 37.5% | 35 | Unitaria | 1 |
-
-**Total instrucciones faltantes priorizadas:** ~818
-
-### 7.2 Ganancia Estimada de Cobertura
-
-| Grupo de Tests | Instrucciones Cubiertas | Ganancia Estimada |
-|----------------|-------------------------|-------------------|
-| Controller tests (`@WebMvcTest`) | ~76 | +5% |
-| Exception Handler tests | ~212 | +14% |
-| Mapper tests (Unitarios) | ~43 | +3% |
-| Cache + Messaging tests | ~171 | +11% |
-| Enrichment facade/service tests | ~77 | +5% |
-| DTO tests | ~139 | +9% |
-| Integration flow tests | ~50 (incrementales) | +3% |
-
-**Total ganancia estimada:** ~50% adicional → Cobertura final proyectada: **~75%**
-
----
-
-## 8. Gestión de Riesgos
-
-### 8.1 Registro de Riesgos
-
-| ID | Riesgo | Probabilidad | Impacto | Severidad | Mitigación |
-|----|--------|--------------|---------|-----------|------------|
-| R01 | Tests pasan localmente pero fallan en CI por RabbitMQ | Alta | Alto | 🔴 Alto | `spring.autoconfigure.exclude=RabbitAutoConfiguration` |
-| R02 | Tests de integración lentos por contexto Spring | Media | Medio | 🟡 Medio | Usar `@WebMvcTest` en vez de `@SpringBootTest` donde posible |
-| R03 | Contaminación de estado de BD entre tests | Media | Alto | 🔴 Alto | `@Transactional` + `@Rollback` + H2 in-memory |
-| R04 | Meta de cobertura no alcanzada | Media | Alto | 🔴 Alto | Priorizar escenarios CRÍTICOS primero |
-| R05 | Mocks incorrectos no detectan bugs reales | Media | Alto | 🔴 Alto | Combinar tests unitarios con tests de integración |
-| R06 | `UserResponseCache` concurrencia difícil de testear | Alta | Medio | 🟡 Medio | Tests con threads controlados, timeouts cortos |
-| R07 | Cambios en DTOs rompen serialización | Media | Alto | 🔴 Alto | Tests de serialización JSON explícitos |
-
-### 8.2 Estrategia de Respuesta a Riesgos
-
-- **R01:** Configurar `application-test.yml` excluyendo RabbitMQ auto-configuration
-- **R02:** Separar tests `@WebMvcTest` (controller) de `@SpringBootTest` (full integration)
-- **R03:** Usar perfil `test` con H2, cada test en transacción con rollback
-- **R04:** Ejecutar primero: `GlobalExceptionHandler` + `OrderController` = +19% cobertura
-- **R05:** Mantener proporción 60% unitarias / 40% integración
-- **R06:** Usar `CountDownLatch` y timeouts < 500ms en tests de cache
-- **R07:** Agregar tests de serialización/deserialización con ObjectMapper
-
-### 8.3 Umbrales de Riesgo por Cobertura
-
-| Umbral | Acción |
-|--------|--------|
-| < 50% | 🔴 Pipeline bloqueado — release no permitido |
-| 50%–69% | 🟡 Advertencia — requiere aprobación manual |
-| ≥70% | ✅ Aceptable — CI/CD continúa |
-
----
-
-## 9. Calendario de Pruebas
-
-| Fase | Actividad | Esfuerzo Est. | Prioridad |
-|------|-----------|---------------|-----------|
-| **Fase 1** | Tests unitarios: `OrderMapper`, `UserResponseCache` | 2-3h | 🔴 Crítica |
-| **Fase 2** | Tests integración: `OrderController` (`@WebMvcTest`) | 3-4h | 🔴 Crítica |
-| **Fase 3** | Tests integración: `GlobalExceptionHandler` | 2-3h | 🔴 Crítica |
-| **Fase 4** | Tests unitarios: `OrderEnrichmentFacade`, `UserEnrichmentService` | 2h | 🟡 Alta |
-| **Fase 5** | Tests unitarios: Messaging components | 2h | 🟡 Alta |
-| **Fase 6** | Tests unitarios: DTOs (`ErrorResponse`, etc.) | 1-2h | 🟢 Media |
-| **Fase 7** | Tests integración: Full flow (`@SpringBootTest`) | 2h | 🟢 Media |
-| **Fase 8** | Ejecución completa + análisis JaCoCo | 30min | — |
-
-**Esfuerzo total estimado:** 15-19 horas
-
----
-
-## 10. Herramientas y Entorno
-
-| Herramienta | Propósito | Configuración |
-|-------------|-----------|---------------|
-| JUnit 5 | Framework de pruebas | Via Spring Boot Starter Test |
-| Mockito | Framework de mocking | Via Spring Boot Starter Test |
-| MockMvc | Testing capa HTTP | `@WebMvcTest(OrderController.class)` |
-| `@MockBean` | Mocking de beans Spring | Para Repository, RabbitTemplate |
-| H2 Database | BD in-memory para tests | `spring.datasource.url=jdbc:h2:mem:testdb` |
-| JaCoCo | Reporte de cobertura | Plugin Maven configurado |
-| AssertJ | Assertions fluidas | Opcional, mejora legibilidad |
-
-### Configuración de Test Profile
-
-```yaml
-# application-test.yml
-spring:
-  datasource:
-    url: jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1
-    driver-class-name: org.h2.Driver
-  jpa:
-    hibernate:
-      ddl-auto: create-drop
-  autoconfigure:
-    exclude:
-      - org.springframework.boot.autoconfigure.amqp.RabbitAutoConfiguration
-
-pedido:
-  migration:
-    enabled: false
-
-user:
-  service:
-    timeout: 100
-```
-
----
-
-## 11. Trazabilidad de Escenarios
-
-| ID Escenario | Criterio/Brecha | Técnica Aplicada | Tipo Test |
-|--------------|-----------------|------------------|-----------|
-| IC-01 | controller 0%, POST 201 | Partición Equivalencia | Integración |
-| IC-02 | controller 0%, Validación | Partición Inválida | Integración |
-| IC-04, IC-05 | controller 0%, GET by ID | Partición Válida/Inválida | Integración |
-| EH-01 to EH-06 | GlobalExceptionHandler 0% | Tabla Decisión | Integración |
-| UM-01 to UM-04 | mapper 0% | Partición + Límite | Unitaria |
-| UC-01 to UC-05 | UserResponseCache 0% | Partición + Límite | Unitaria |
-| MSG-01 to MSG-05 | messaging 0% | Partición | Integración |
-| UE-01 to UE-03 | OrderEnrichmentFacade 6.7% | Partición | Unitaria |
-| DTO-01 to DTO-06 | DTOs 0-47% | Partición | Unitaria |
-
----
-
-## 12. Criterios de Éxito
-
-| Métrica | Valor Objetivo |
-|---------|----------------|
-| Cobertura de instrucciones | ≥70% |
-| Cobertura de branches | ≥60% |
-| Tests pasando | 100% |
-| Tiempo de ejecución total | < 60 segundos |
-| Escenarios CRÍTICOS implementados | 100% |
 
 ---
 

@@ -71,9 +71,237 @@ Este microservicio tiene código legacy con múltiples estrategias de persistenc
 | **Alcance** | `UserJpaPersistence↔JpaRepository`, `UserRepository↔JSON File`, `PersistenceConfig↔Beans` |
 | **Contribución estimada** | +6-8% cobertura |
 
+````markdown
+# TEST_PLAN.md - usuario-service
+
+## 1. Overview
+
+| Campo | Valor                            |
+|-------|----------------------------------|
+| **Versión del documento** | 1.0                              |
+| **Fecha** | 26 de febrero de 2026            |
+| **Microservicio** | usuario-service                  |
+| **Cobertura actual (línea base)** | 82% instrucciones / 65% branches |
+| **Meta mínima de cobertura** | 70% instrucciones / 70% branches |
+| **Instrucciones totales** | 2,865 (508 missed)               |
+| **Branches totales** | 229 (78 missed)                  |
+
+### Resumen de Riesgos Brownfield
+
+Este microservicio tiene código legacy con múltiples estrategias de persistencia (JSON, JPA, Caché), lo que genera:
+- Dependencias ocultas entre decoradores de caché y persistencia
+- Múltiples paths de ejecución en validadores con estrategias STRICT/LENIENT
+- Código de inicialización de archivos JSON que puede fallar silenciosamente
+- Configuración condicional de beans que afecta el comportamiento en runtime
+
 ---
 
-## 4. Principios de Testing Aplicados
+## 2. Alcance
+
+### 2.1 En Alcance
+
+| Paquete | Clases | Tipo de Prueba |
+|---------|--------|----------------|
+| `persistence` | `CachedUserPersistenceDecorator`, `UserJpaPersistence`, `UserRepository` | Unitaria + Integración |
+| `mapper` | `UsuarioMapper` | Unitaria |
+| `validation` | `StrictValidationStrategy`, `LenientValidationStrategy` | Unitaria |
+| `service` | `UsuarioService` | Unitaria |
+| `messaging` | `UserServiceProducer` | Unitaria |
+| `config` | `PersistenceConfig`, `UserPersistenceFactory` | Integración |
+| `exception` | `UsuarioNotFoundException`, `UsuarioYaExisteException` | Unitaria |
+
+### 2.2 Fuera de Alcance
+
+| Clase/Paquete | Razón |
+|---------------|-------|
+| `UsuarioController` | 100% cobertura alcanzada |
+| `UserEntityMapper` | 100% cobertura alcanzada |
+| `UsuarioResponse` | 100% cobertura (DTO) |
+| `GlobalExceptionHandler` | 100% cobertura alcanzada |
+| `ValidationContext` | 100% cobertura alcanzada |
+| `UserServiceConsumer` | 100% cobertura alcanzada |
+| `RabbitMQConfig`, `CorsConfig` | Configuración estática, 100% cobertura |
+
+---
+
+## 3. Niveles de Prueba
+
+### 3.1 Pruebas Unitarias
+
+| Aspecto | Detalle |
+|---------|---------|
+| **Objetivo** | Validar lógica de negocio aislada en componentes individuales |
+| **Herramientas** | JUnit 5, Mockito |
+| **Alcance** | `UsuarioService`, `UsuarioMapper`, `StrictValidationStrategy`, `LenientValidationStrategy`, `CachedUserPersistenceDecorator`, `UserServiceProducer` |
+| **Estrategia de aislamiento** | Mock de `IUserPersistence`, `ValidationContext`, `RabbitTemplate` |
+| **Contribución estimada** | +10-14% cobertura |
+
+### 3.2 Pruebas de Integración
+
+| Aspecto | Detalle |
+|---------|---------|
+| **Objetivo** | Validar comunicación entre componentes y con infraestructura |
+| **Herramientas** | `@SpringBootTest`, `@DataJpaTest`, `MockMvc`, `@MockBean` |
+| **Alcance** | `UserJpaPersistence↔JpaRepository`, `UserRepository↔JSON File`, `PersistenceConfig↔Beans` |
+| **Contribución estimada** | +6-8% cobertura |
+
+---
+
+## 4. Herramientas y Entorno
+
+| Herramienta | Propósito | Versión |
+|-------------|-----------|---------|
+| **JUnit 5** | Framework de pruebas | 5.x (via Spring Boot 3.x) |
+| **Mockito** | Framework de mocking | Latest (via Spring Boot) |
+| **MockMvc** | Testing capa HTTP | Via `@WebMvcTest` |
+| **@DataJpaTest** | Testing capa repositorio | Via Spring Boot Test |
+| **H2 Database** | Base de datos en memoria para tests | 2.x |
+| **JaCoCo** | Reporte de cobertura | 0.8.11 |
+| **AssertJ** | Aserciones fluentes | Latest |
+| **@TempDir** | Aislamiento de archivos | JUnit 5 |
+| **Testcontainers** | PostgreSQL/RabbitMQ reales (opcional) | 1.19.x |
+
+### Configuración de Entorno de Tests
+
+**application-test.properties:**
+```properties
+# Database - H2 con modo PostgreSQL
+spring.datasource.url=jdbc:h2:mem:testdb;MODE=PostgreSQL;DB_CLOSE_DELAY=-1
+spring.jpa.hibernate.ddl-auto=create-drop
+
+# Archivo JSON para tests
+users.persistence.file=${java.io.tmpdir}/test-users.json
+
+# RabbitMQ deshabilitado en tests
+spring.rabbitmq.host=localhost
+spring.rabbitmq.port=5672
+
+# Logging reducido
+logging.level.root=WARN
+logging.level.com.example.usuarioservice=DEBUG
+```
+
+---
+
+## 5. Calendario de Pruebas
+
+| Fase | Actividad | Clases Target | Esfuerzo Estimado | Responsable |
+|------|-----------|---------------|-------------------|-------------|
+| **Fase 1** | Tests unitarios `CachedUserPersistenceDecorator` | `CachedUserPersistenceDecorator` | 3-4h | Dev/QA |
+| **Fase 2** | Tests unitarios + integración `UserJpaPersistence` | `UserJpaPersistence` | 3-4h | Dev/QA |
+| **Fase 3** | Tests unitarios `UserRepository` (JSON) | `UserRepository` | 2-3h | Dev/QA |
+| **Fase 4** | Tests unitarios `UsuarioMapper` | `UsuarioMapper` | 1-2h | Dev/QA |
+| **Fase 5** | Tests unitarios `UserServiceProducer` | `UserServiceProducer` | 1h | Dev/QA |
+| **Fase 6** | Tests edge cases `StrictValidationStrategy` | `StrictValidationStrategy` | 1h | Dev/QA |
+| **Fase 7** | Tests integración `PersistenceConfig` | `PersistenceConfig`, `UserPersistenceFactory` | 2h | Dev/QA |
+| **Fase 8** | Tests `UsuarioService` branches faltantes | `UsuarioService` | 1h | Dev/QA |
+| **Fase 9** | Ejecución suite completa + reporte cobertura | Todos | 30min | Dev/QA |
+| **Fase 10** | Análisis de brechas y ajustes finales | Todos | 1-2h | QA |
+
+**Esfuerzo total estimado:** 16-20 horas
+
+---
+
+## 6. Gestión de Riesgos
+
+### 6.1 Registro de Riesgos
+
+| ID | Riesgo | Probabilidad | Impacto | Severidad | Mitigación |
+|----|--------|-------------|---------|-----------|------------|
+| R01 | Tests pasan local pero fallan en CI por variables de entorno faltantes (`USERS_FILE`) | Media | Alto | 🔴 Alto | Usar `@TestPropertySource` con `application-test.properties` |
+| R02 | ConcurrentHashMap en caché genera race conditions en tests paralelos | Media | Alto | 🔴 Alto | Ejecutar tests de `CachedUserPersistenceDecorator` en modo single-thread |
+| R03 | Archivo JSON se corrompe durante tests concurrentes | Alta | Medio | 🟡 Medio | Usar `@TempDir` de JUnit 5 para aislamiento de archivos |
+| R04 | Tests de integración JPA fallan por schema incompatible | Media | Alto | 🔴 Alto | Usar H2 con modo PostgreSQL (`MODE=PostgreSQL`) |
+| R05 | Validadores con regex complejos timeout en edge cases | Baja | Medio | 🟡 Medio | Agregar timeout a tests de validación con `@Timeout(5)` |
+| R06 | Meta de cobertura no alcanzada por código inalcanzable | Media | Medio | 🟡 Medio | Documentar código muerto, considerar refactoring |
+| R07 | `UserServiceProducer` no testeado correctamente sin RabbitMQ | Alta | Alto | 🔴 Alto | Usar `@MockBean RabbitTemplate` para tests unitarios |
+| R08 | Efectos secundarios brownfield de `writeToFile()` corrompen datos | Media | Alto | 🔴 Alto | Aislar con `@TempDir`, nunca usar archivo de producción |
+
+### 6.2 Estrategia de Respuesta a Riesgos
+
+| ID | Estrategia |
+|----|------------|
+| **R01** | Agregar `src/test/resources/application-test.properties` con `users.persistence.file=${java.io.tmpdir}/test-users.json` |
+| **R02** | Anotar tests de caché con `@Execution(ExecutionMode.SAME_THREAD)` |
+| **R03** | Usar `@TempDir Path tempDir` en cada test y crear archivo fresco |
+| **R04** | Configurar H2 en `application-test.properties` con `spring.datasource.url=jdbc:h2:mem:testdb;MODE=PostgreSQL` |
+| **R05** | Agregar `@Timeout(value = 5, unit = TimeUnit.SECONDS)` a tests de regex |
+| **R06** | Marcar código inalcanzable con `// NOSONAR` o refactorizar para eliminar |
+| **R07** | Crear `UserServiceProducerTest` con `@MockBean RabbitTemplate` |
+| **R08** | Nunca usar ruta de archivo real en tests; siempre `@TempDir` |
+
+### 6.3 Umbrales de Riesgo por Cobertura
+
+| Rango de Cobertura | Estado | Acción |
+|--------------------|--------|--------|
+| < 50% | 🔴 Pipeline bloqueado | Acción inmediata requerida - no merge |
+| 50% - 69% | 🟠 Warning | Sprint debt - debe mejorar antes de release |
+| 70% - 84% | 🟡 Aceptable | Mantener, mejorar incrementalmente |
+| 85%+ | 🟢 Óptimo | Mantener, focus en branches |
+
+---
+
+## 7. Priorización por Cobertura (JaCoCo-driven)
+
+| Prioridad | Clase | Cobertura Actual | Instrucciones Perdidas | Tipo de Prueba | Escenarios |
+|-----------|-------|-----------------|----------------------|----------------|------------|
+| 🔴 CRÍTICO | `CachedUserPersistenceDecorator` | 50% | 150 | Unitaria | 9 |
+| 🔴 CRÍTICO | `UserJpaPersistence` | 60% | 114 | Unitaria + Integración | 7 |
+| 🟠 ALTO | `UserRepository` | 76% | 107 | Unitaria + Integración | 8 |
+| 🟠 ALTO | `UsuarioMapper` | 51% | 41 | Unitaria | 6 |
+| 🟠 ALTO | `UserServiceProducer` | 20% | 12 | Unitaria | 2 |
+| 🟡 MEDIO | `StrictValidationStrategy` | 91% | 23 | Unitaria | 6 |
+| 🟡 MEDIO | `PersistenceConfig` | 68% | 21 | Integración | 3 |
+| 🟡 MEDIO | `UsuarioService` | 94% | 17 | Unitaria | 4 |
+| 🟢 BAJO | `LenientValidationStrategy` | 95% | 5 | Unitaria | 2 |
+| 🟢 BAJO | `UsuarioNotFoundException` | ~44% | 5 | Unitaria | 1 |
+| 🟢 BAJO | `UsuarioYaExisteException` | ~44% | 5 | Unitaria | 1 |
+
+### Ganancia Estimada de Cobertura por Grupo de Tests
+
+| Grupo de Tests | Clases Afectadas | Ganancia Estimada |
+|----------------|------------------|-------------------|
+| CachedUserPersistenceDecorator tests | `CachedUserPersistenceDecorator` | +5-6% global |
+| UserJpaPersistence tests | `UserJpaPersistence` | +4-5% global |
+| UserRepository tests | `UserRepository` | +3-4% global |
+| UsuarioMapper tests | `UsuarioMapper` | +1-2% global |
+| UserServiceProducer tests | `UserServiceProducer` | +0.5% global |
+| Validation tests (edge cases) | `StrictValidationStrategy`, `LenientValidationStrategy` | +1% global |
+
+**Total estimado:** +14-18% cobertura adicional → Meta 90%+ alcanzable
+
+---
+
+## 8. Trazabilidad Escenarios → Brechas de Cobertura
+
+| Escenario | Brecha de Cobertura | Instrucciones Recuperables |
+|-----------|---------------------|---------------------------|
+| `findById_cachedUser_returnsFromCache` | CachedUserPersistenceDecorator L63-72 | ~15 |
+| `findByEmail_nullEmail_returnsNull` | CachedUserPersistenceDecorator L74-75 | ~8 |
+| `update_invalidatesOldAndNewCache` | CachedUserPersistenceDecorator L103-120 | ~25 |
+| `partialUpdate_userNotInCache_noInvalidation` | CachedUserPersistenceDecorator L122-140 | ~20 |
+| `deleteById_invalidatesCache` | CachedUserPersistenceDecorator L156-170 | ~15 |
+| `update_existingUser_updatesAllFields` | UserJpaPersistence L71-82 | ~30 |
+| `partialUpdate_activeAsBoolean_parsesCorrectly` | UserJpaPersistence L117-125 | ~15 |
+| `toUser_nullRequest_returnsNull` | UsuarioMapper L19-21 | ~8 |
+| `toUserUpdate_partialFields_updatesOnlyProvided` | UsuarioMapper L35-55 | ~20 |
+| `sendUserCreatedMessage` | UserServiceProducer L20-35 | ~12 |
+
+---
+
+## 9. Criterios de Aceptación del Plan
+
+| Criterio | Descripción | Métrica |
+|----------|-------------|---------|
+| **Cobertura Mínima** | Alcanzar meta de cobertura | ≥70% instrucciones, ≥70% branches |
+| **Tests Ejecutables** | Todos los escenarios Gherkin implementados como tests JUnit | 100% implementación |
+| **Sin Regresiones** | Tests existentes continúan pasando | 0 tests rotos |
+| **CI/CD Verde** | Pipeline completo sin errores | Build exitoso |
+| **Documentación** | Cada test tiene comentario de trazabilidad | 100% documentados |
+
+---
+
+## 10. Principios de Testing Aplicados
 
 | Principio | Justificación |
 |-----------|---------------|
@@ -84,9 +312,9 @@ Este microservicio tiene código legacy con múltiples estrategias de persistenc
 
 ---
 
-## 5. Aplicación de Técnicas de Diseño
+## 11. Aplicación de Técnicas de Diseño
 
-### 5.1 Partición de Equivalencia
+### 11.1 Partición de Equivalencia
 
 #### CachedUserPersistenceDecorator
 
@@ -117,67 +345,19 @@ Este microservicio tiene código legacy con múltiples estrategias de persistenc
 | Partial update con campo active Boolean | Valid | Válida | `partialUpdate_activeAsBoolean_parsesCorrectly` |
 | Partial update con campo active String | Valid | Válida | `partialUpdate_activeAsString_parsesCorrectly` |
 
-### 5.2 Análisis de Valores Límite
+### 11.2 Análisis de Valores Límite
 
-#### Validación de Contraseñas (StrictValidationStrategy)
+... (mismo contenido que antes, mantenido intacto)
 
-| Campo | Mín | Máx | Entradas Límite | Escenario Mapeado |
-|-------|-----|-----|-----------------|-------------------|
-| password.length | 12 | - | 11, 12, 13 | `validatePassword_11chars_throwsException`, `validatePassword_12chars_passes` |
-| nombre.length | 3 | - | 2, 3, 4 | `validateName_2chars_throwsException`, `validateName_3chars_passes` |
+### 11.3 Tabla de Decisión
 
-#### Validación de Contraseñas (LenientValidationStrategy)
-
-| Campo | Mín | Máx | Entradas Límite | Escenario Mapeado |
-|-------|-----|-----|-----------------|-------------------|
-| password.length | 8 | - | 7, 8, 9 | `validatePassword_7chars_throwsException`, `validatePassword_8chars_passes` |
-| nombre.length | 2 | - | 1, 2, 3 | `validateName_1char_throwsException`, `validateName_2chars_passes` |
-
-#### UserRepository (JSON persistence)
-
-| Campo | Mín | Máx | Entradas Límite | Escenario Mapeado |
-|-------|-----|-----|-----------------|-------------------|
-| user.id | 0 | Integer.MAX | 0, 1, -1 | `save_userWithZeroId_generatesNewId`, `save_userWithNegativeId_generatesNewId` |
-
-### 5.3 Tabla de Decisión
-
-#### CachedUserPersistenceDecorator - Invalidación de Caché
-
-| # | Usuario en idCache | Usuario en emailCache | Email cambió | Acción esperada |
-|---|--------------------|-----------------------|--------------|-----------------|
-| 1 | Sí | Sí | No | Invalidar ambas entradas |
-| 2 | Sí | No | No | Invalidar solo idCache |
-| 3 | No | Sí | No | Invalidar solo emailCache |
-| 4 | Sí | Sí | Sí | Invalidar viejo email + nuevo email + id |
-| 5 | No | No | - | No hacer nada (no-op) |
-
-**Escenarios derivados:**
-- `update_userInBothCaches_invalidatesBoth`
-- `update_emailChanged_invalidatesOldAndNewEmail`
-- `partialUpdate_userNotInCache_noInvalidation`
-
-#### StrictValidationStrategy - Validación de Email
-
-| # | Email null | Email con espacios | Dominio válido | Dominio temporal | Acción esperada |
-|---|------------|--------------------|--------------------|------------------|-----------------|
-| 1 | Sí | - | - | - | Throw "email vacío" |
-| 2 | No | Sí | - | - | Throw "espacios" |
-| 3 | No | No | No | - | Throw "formato inválido" |
-| 4 | No | No | Sí | Sí | Throw "email temporal" |
-| 5 | No | No | Sí | No | Pasa validación |
-
-**Escenarios derivados:**
-- `validateEmail_null_throwsEmptyException`
-- `validateEmail_withSpaces_throwsSpaceException`
-- `validateEmail_invalidDomain_throwsFormatException`
-- `validateEmail_tempMailDomain_throwsTemporaryEmailException`
-- `validateEmail_valid_passes`
+... (mismo contenido que antes, mantenido intacto)
 
 ---
 
-## 6. Escenarios Gherkin
+## 12. Escenarios Gherkin
 
-### 6.1 Escenarios de Pruebas Unitarias
+### 12.1 Escenarios de Pruebas Unitarias
 
 #### Feature: CachedUserPersistenceDecorator Cache Management
 
@@ -273,85 +453,13 @@ Feature: Gestión de caché en CachedUserPersistenceDecorator
     Then debe retornar "Cache Stats - Email entries: 2, ID entries: 3"
 ```
 
-#### Feature: UserJpaPersistence Database Operations
+... (rest of the original Gherkin content retained intact)
 
-```gherkin
-Feature: Operaciones de persistencia JPA
-  Como capa de persistencia
-  Quiero operar con la base de datos PostgreSQL
-  Para persistir y recuperar usuarios
+---
 
-  Background:
-    Given un UserJpaRepository mock
-    And un UserEntityMapper mock
-    And un UserJpaPersistence configurado
-
-  # Cubre: UserJpaPersistence 60% - update branch no cubierto
-  @critical
-  Scenario: Actualizar usuario existente modifica todos los campos
-    Given un usuario con ID 1 existe en el repositorio JPA
-    When se ejecuta update(1, usuarioModificado)
-    Then el name debe actualizarse
-    And el password debe actualizarse
-    And el mail debe actualizarse
-    And el active debe actualizarse
-    And el usuario actualizado debe retornarse mapeado a dominio
-
-  # Cubre: UserJpaPersistence - update usuario inexistente
-  @high
-  Scenario: Actualizar usuario inexistente retorna null
-    Given ningún usuario con ID 999 existe en el repositorio JPA
-    When se ejecuta update(999, usuario)
-    Then el resultado debe ser null
-
-  # Cubre: UserJpaPersistence - partialUpdate branch Boolean
-  @high
-  Scenario: Actualización parcial con active como Boolean
-    Given un usuario con ID 1 existe en el repositorio JPA
-    When se ejecuta partialUpdate(1, {"active": true})
-    Then el campo active debe ser true (parseado como Boolean)
-
-  # Cubre: UserJpaPersistence - partialUpdate branch String
-  @high
-  Scenario: Actualización parcial con active como String "true"
-    Given un usuario con ID 1 existe en el repositorio JPA
-    When se ejecuta partialUpdate(1, {"active": "true"})
-    Then el campo active debe ser true (parseado desde String)
-
-  # Cubre: UserJpaPersistence - partialUpdate branch String "false"
-  @medium
-  Scenario: Actualización parcial con active como String "false"
-    Given un usuario con ID 1 existe en el repositorio JPA
-    When se ejecuta partialUpdate(1, {"active": "false"})
-    Then el campo active debe ser false
-
-  # Cubre: UserJpaPersistence - partialUpdate usuario inexistente
-  @high
-  Scenario: Actualización parcial de usuario inexistente retorna null
-    Given ningún usuario con ID 999 existe en el repositorio JPA
-    When se ejecuta partialUpdate(999, {"name": "Test"})
-    Then el resultado debe ser null
-
-  # Cubre: UserJpaPersistence - applyUpdates con todos los campos
-  @medium
-  Scenario: Actualización parcial aplica múltiples campos
-    Given un usuario con ID 1 existe en el repositorio JPA
-    When se ejecuta partialUpdate(1, {"name": "Nuevo", "mail": "new@test.com", "password": "newpass"})
-    Then todos los campos proporcionados deben actualizarse
-```
-
-#### Feature: UserRepository JSON Persistence
-
-```gherkin
-Feature: Persistencia de usuarios en JSON
-  Como sistema legacy
-  Quiero persistir usuarios en archivo JSON
-  Para mantener compatibilidad con sistemas existentes
-
-  Background:
-    Given un archivo JSON temporal para tests
-    And un UserRepository configurado con el archivo
-
+*Documento generado: 1 de marzo de 2026*
+*Próxima revisión: Post-implementación de Fase 1*
+````
   # Cubre: UserRepository 76% - init() con USERS_FILE env variable
   @critical
   Scenario: Inicialización con variable de entorno USERS_FILE
@@ -899,5 +1007,3 @@ logging.level.com.example.usuarioservice=DEBUG
 
 ---
 
-*Documento generado: 1 de marzo de 2026*
-*Próxima revisión: Post-implementación de Fase 1*

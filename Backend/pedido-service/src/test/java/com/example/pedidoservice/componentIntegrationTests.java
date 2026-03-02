@@ -125,7 +125,7 @@ class ComponentIntegrationTests {
         int orderId = ((OrderDto) createBody).getId();
 
         // Act
-        ResponseEntity<?> deleteResponse = orderController.deleteOrder(orderId);
+        ResponseEntity<?> deleteResponse = orderController.deactivateOrder(orderId);
         ResponseEntity<?> getResponse = null;
         try {
             getResponse = orderController.showOrderById(orderId);
