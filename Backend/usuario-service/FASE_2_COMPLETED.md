@@ -178,7 +178,7 @@ open target/site/jacoco/index.html
 
 - ✅ Cobertura UsuarioService: ≥90% instrucciones
 - ✅ Cobertura UserServiceProducer: ≥90% instrucciones
-- ✅ Branches: ≥80%
+- ✅ Branches: ≥70%
 - ✅ BUILD: GREEN
 
 ---

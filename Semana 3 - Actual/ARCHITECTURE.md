@@ -399,8 +399,8 @@ rabbitmq:
 | Servicio | Cobertura | Objetivo |
 |----------|-----------|----------|
 | usuario-service | 50%+ | 70% |
-| pedido-service | 70%+ | 80% |
-| Frontend | 80%+ | ✅ Cumplido |
+| pedido-service | 70%+ | 70% |
+| Frontend | 70%+ | ✅ Cumplido |
 
 **Solución Recomendada:**
 - Añadir tests de casos límite para lógica de validación

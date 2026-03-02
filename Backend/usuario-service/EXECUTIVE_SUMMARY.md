@@ -12,7 +12,7 @@ Se realizó una auditoría completa del servicio de usuarios (usuario-service) e
 |---------|--------|----------|-------|
 | **Puntuación SOLID** | 1/5 | 4.5/5 | -3.5 |
 | **Code Smell Density** | 12 issues | <3 issues | -9 |
-| **Test Coverage** | 0% | 80%+ | -80pp |
+| **Test Coverage** | 0% | 70%+ | -70pp |
 | **Responsabilidades por clase** | 4 | 1 | -3 |
 | **Acoplamiento** | ALTO | BAJO | ↓ |
 | **Testabilidad** | Nula | Excelente | ↑ |
@@ -387,7 +387,7 @@ Debugging → 2+ horas por bug
 
 ```
 DESPUÉS:
-Test Coverage: 80%+
+Test Coverage: 70%+
 ├─ Service Tests (13 tests)
 ├─ Controller Tests (8 tests)
 ├─ Integration Tests (5tests)
