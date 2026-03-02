@@ -202,4 +202,152 @@ class CachedUserPersistenceDecoratorTest {
         assertEquals(user, resultById);
         verify(delegate, never()).findById(42);
     }
+
+    @Test
+    @DisplayName("findById should return cached user on subsequent calls")
+    // TEST_PLAN: findById cache hit - Lines 180-189
+    void findById_cacheHit_shouldReturnFromCache() {
+        // Given: Usuario en caché después de primera consulta
+        User user = new User(1, "Juan", "pass", "juan@test.com", true);
+        when(delegate.findById(1)).thenReturn(user);
+
+        // When: Primera consulta
+        User first = cachedDecorator.findById(1);
+
+        // Then
+        assertEquals(user, first);
+        verify(delegate, times(1)).findById(1);
+
+        // When: Segunda consulta (cache hit)
+        User second = cachedDecorator.findById(1);
+
+        // Then: No debe invocar delegate nuevamente
+        assertEquals(user, second);
+        verify(delegate, times(1)).findById(1); // Mismo count - no llamó otra vez
+    }
+
+    @Test
+    @DisplayName("update should invalidate both old and new email cache entries")
+    // TEST_PLAN: update invalida caché - Lines 228-235
+    void update_invalidatesCacheEmailEntries() {
+        // Given: Usuario cacheado con email anterior
+        User oldUser = new User(1, "Juan", "pass", "old@test.com", true);
+        User newUser = new User(1, "Juan", "pass", "new@test.com", true);
+
+        when(delegate.findById(1)).thenReturn(oldUser);
+        cachedDecorator.findById(1); // Cachea con ID 1
+
+        when(delegate.findByEmail("old@test.com")).thenReturn(oldUser);
+        cachedDecorator.findByEmail("old@test.com"); // Cachea email antiguo
+
+        when(delegate.update(1, newUser)).thenReturn(newUser);
+
+        // When: Se actualiza el usuario
+        cachedDecorator.update(1, newUser);
+
+        // Then: Cachés deben ser invalidados
+        // Verificar que consultas posteriores invocan delegate
+        when(delegate.findById(1)).thenReturn(newUser);
+        User result = cachedDecorator.findById(1);
+
+        assertEquals(newUser, result);
+        verify(delegate, atLeastOnce()).findById(1);
+    }
+
+    @Test
+    @DisplayName("partialUpdate with non-existent user should not throw NPE")
+    // TEST_PLAN: partialUpdate usuario no existe - Lines 237-243
+    void partialUpdate_nonExistentUser_nullSafe() {
+        // Given
+        java.util.Map<String, Object> updates = java.util.Map.of("nombre", "NewName");
+        when(delegate.partialUpdate(999, updates)).thenReturn(null);
+
+        // When/Then: No debe lanzar NullPointerException
+        User result = cachedDecorator.partialUpdate(999, updates);
+
+        assertNull(result);
+        verify(delegate).partialUpdate(999, updates);
+    }
+
+    @Test
+    @DisplayName("deleteById should invalidate both ID and email cache")
+    // TEST_PLAN: deleteById invalida caché - Lines 245-251
+    void deleteById_invalidatesUserCache() {
+        // Given: Usuario cacheado
+        User user = new User(1, "Juan", "pass", "juan@test.com", true);
+        when(delegate.findById(1)).thenReturn(user);
+        cachedDecorator.findById(1); // Cachea por ID
+
+        when(delegate.findByEmail("juan@test.com")).thenReturn(user);
+        cachedDecorator.findByEmail("juan@test.com"); // Cachea por email
+
+        when(delegate.deleteById(1)).thenReturn(true);
+
+        // When: Se elimina usuario
+        cachedDecorator.deleteById(1);
+
+        // Then: Consultas posteriores deben invocar delegate (caché invalidado)
+        when(delegate.findById(1)).thenReturn(null);
+        User result = cachedDecorator.findById(1);
+
+        assertNull(result);
+        verify(delegate, atLeastOnce()).findById(1);
+    }
+
+    @Test
+    @DisplayName("deleteAll should clear both caches completely")
+    // TEST_PLAN: deleteAll limpia caché - Lines 253-259
+    void deleteAll_clearsAllCaches() {
+        // Given: Múltiples usuarios cacheados
+        User user1 = new User(1, "Juan", "pass", "juan@test.com", true);
+        User user2 = new User(2, "Pedro", "pass", "pedro@test.com", true);
+
+        when(delegate.findById(1)).thenReturn(user1);
+        when(delegate.findById(2)).thenReturn(user2);
+        cachedDecorator.findById(1);
+        cachedDecorator.findById(2);
+
+        doNothing().when(delegate).deleteAll();
+        // When: Se eliminan todos los usuarios
+        cachedDecorator.deleteAll();
+
+        // Then: Cachés deben estar vacíos
+        // Consultas posteriores deben invocar delegate
+        when(delegate.findById(1)).thenReturn(null);
+        cachedDecorator.findById(1);
+
+        verify(delegate, atLeastOnce()).findById(1);
+    }
+
+    @Test
+    @DisplayName("getCacheStats should return correct cache statistics")
+    // TEST_PLAN: getCacheStats - Lines 267-273
+    void getCacheStats_returnsCacheMetrics() {
+        // Given: 3 usuarios en idCache, 2 en emailCache
+        User user1 = new User(1, "Juan", "pass", "juan@test.com", true);
+        User user2 = new User(2, "Pedro", "pass", "pedro@test.com", true);
+        User user3 = new User(3, "Ana", "pass", "ana@test.com", true);
+
+        when(delegate.findById(1)).thenReturn(user1);
+        when(delegate.findById(2)).thenReturn(user2);
+        when(delegate.findById(3)).thenReturn(user3);
+
+        cachedDecorator.findById(1);
+        cachedDecorator.findById(2);
+        cachedDecorator.findById(3);
+
+        when(delegate.findByEmail("juan@test.com")).thenReturn(user1);
+        when(delegate.findByEmail("pedro@test.com")).thenReturn(user2);
+
+        cachedDecorator.findByEmail("juan@test.com");
+        cachedDecorator.findByEmail("pedro@test.com");
+
+        // When
+        String stats = cachedDecorator.getCacheStats();
+
+        // Then
+        assertNotNull(stats);
+        assertTrue(stats.contains("Email entries: 2"));
+        assertTrue(stats.contains("ID entries: 3"));
+    }
 }
