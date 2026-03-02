@@ -1,6 +1,8 @@
 package com.example.pedidoservice.messaging;
 
 import com.example.pedidoservice.config.RabbitMQConfig;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -8,8 +10,13 @@ import org.springframework.stereotype.Component;
 @Component
 public class UserServiceProducer {
 
-    @Autowired
-    private RabbitTemplate rabbitTemplate;
+    private static final Logger log = LoggerFactory.getLogger(UserServiceProducer.class);
+
+    private final RabbitTemplate rabbitTemplate;
+
+    public UserServiceProducer(RabbitTemplate rabbitTemplate) {
+        this.rabbitTemplate = rabbitTemplate;
+    }
 
     public void requestUserInfo(int userId) {
     /**
@@ -26,6 +33,6 @@ public class UserServiceProducer {
         RabbitMQConfig.USER_REQUEST_ROUTING_KEY,
         request
     );
-    System.out.println("User info request sent for userId: " + userId);
+    log.debug("User info request sent for userId: {}", userId);
     }
 }

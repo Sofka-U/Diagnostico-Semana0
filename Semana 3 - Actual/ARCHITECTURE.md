@@ -1,0 +1,1477 @@
+# ANÁLISIS DE ARQUITECTURA Y DOCUMENTACIÓN DE PUNTOS DE DOLOR
+
+**Fecha del Documento:** 24 de Febrero, 2026  
+**Alcance:** Análisis completo del sistema basado en HANDOVER_REPORT.md, API_AUDIT_REPORT.md y auditoría del workspace  
+**Estado:** Reporte de Diagnóstico
+
+---
+
+## 1. Resumen Ejecutivo
+
+Este documento proporciona un análisis arquitectónico detallado del proyecto **Diagnostico-Semana0**, identificando puntos de dolor críticos ("dolores") que impactan la mantenibilidad, escalabilidad, seguridad y confiabilidad operacional.
+
+El sistema consiste en dos microservicios Spring Boot (`usuario-service`, `pedido-service`), un frontend React + Vite, mensajería asíncrona vía RabbitMQ, y PostgreSQL para persistencia.
+
+### Calificación General de Salud: ⚠️ RIESGO MEDIO
+
+| Área | Calificación | Severidad |
+|------|--------------|-----------|
+| **Seguridad** | 🔴 Crítico | Contraseñas en texto plano |
+| **Persistencia** | 🟡 Medio | Confusión modo dual (JSON/PostgreSQL) |
+| **Observabilidad** | 🔴 Alto | Sin logging estructurado |
+| **Diseño de API** | 🟡 Medio | Inconsistencias REST (adherencia parcial) |
+| **Resiliencia** | 🔴 Alto | Sin DLQ, sin circuit breakers |
+| **Testing** | 🟢 Aceptable | 50-70% cobertura |
+
+### Nivel de Adherencia REST
+
+- **`usuario-service`**: ✅ Buenas prácticas (DTOs, controlador delgado, `GlobalExceptionHandler`)
+- **`pedido-service`**: ⚠️ Funcional pero con inconsistencias en códigos HTTP, nomenclatura y manejo de errores
+
+---
+
+## Documentación de Endpoints (DESPUES DE LOS CAMBIOS, REFACTORS Y ARREGLOS EN LOS DEFECTOS ENCONTRADOS EN LAS APIS; ESOS DOLORES SE ENCUENTREN EN ESTE DOCUMENTO)
+
+**usuario-service** (base path: `/users`)
+
+- GET `/users`
+  - Descripción: Devuelve la lista de usuarios activos.
+  - Response 200: Array de `UsuarioResponse`.
+  - Ejemplo response:
+
+```json
+[{"id":1,"name":"Alice","mail":"alice@example.com","active":true}]
+```
+
+- GET `/users/{identificador}`
+  - Descripción: Obtiene un usuario por `id` o por `email` (parámetro `identificador`).
+  - Response 200: `UsuarioResponse`.
+  - Response 404: Error `Usuario no encontrado`.
+  - Ejemplo response:
+
+```json
+{"id":1,"name":"Alice","mail":"alice@example.com","active":true}
+```
+
+- POST `/users`
+  - Descripción: Crea un nuevo usuario.
+  - Request body: `CreateUsuarioRequest` 
+    - Campos relevantes (JSON): `name` (string, requerido), `mail` (string, requerido, email), `contrasena` (string, requerido, min 8, patrón de mayúsculas/minúsculas/dígitos).
+  - Response 201: `UsuarioResponse` (usuario creado).
+  - Response 400: Validación fallida.
+  - Response 409: Usuario ya existe (por email) — lanzado por la capa de servicio si aplica.
+  - Ejemplo request:
+
+```json
+{"name":"Alice","mail":"alice@example.com","contrasena":"Secret123"}
+```
+
+- PUT `/users/{id}`
+  - Descripción: Reemplazo completo del usuario con `UpdateUsuarioRequest`.
+  - Request body: `UpdateUsuarioRequest` (nombre, email, contrasena, activo).
+  - Response 200: `UsuarioResponse` con datos actualizados.
+  - Response 404: Usuario no encontrado.
+
+- PATCH `/users/{id}`
+  - Descripción: Actualización parcial; acepta campos opcionales de `UpdateUsuarioRequest`.
+  - Response 200: `UsuarioResponse` actualizado.
+  - Response 404: Usuario no encontrado.
+
+- DELETE `/users/{id}`
+  - Descripción: Elimina un usuario.
+  - Response 204: Eliminación exitosa (sin body).
+  - Response 404: Usuario no encontrado.
+
+DTOs relacionadas (resumen):
+
+- `CreateUsuarioRequest`:
+  - `name` (string)
+  - `mail` (string)
+  - `contrasena` (string)
+
+- `UpdateUsuarioRequest`:
+  - `nombre` (string, opcional), `email` (string, opcional), `contrasena` (string, opcional), `activo` (boolean, opcional)
+
+- `UsuarioResponse`:
+  - `id` (int), `name` (string), `mail` (string), `active` (boolean)
+
+---
+
+**pedido-service** (base path: `/orders`)
+
+- POST `/orders`
+  - Descripción: Crea una orden. El servicio espera un `OrderDto` sin `id`, `state` ni `active` (estos son gestionados por el servicio).
+  - Request body: `OrderDto` (name, description, idUser).
+  - Response 201: `OrderDto` creado con `id`, `state` inicial y `active=true`. Además se establece header `Location: /orders/{id}`.
+  - Response 400: Validación fallida.
+  - Ejemplo request:
+
+```json
+{"name":"Pedido 1","description":"Descripción","idUser":2}
+```
+
+  - Ejemplo response (201):
+
+```json
+{"id":10,"name":"Pedido 1","description":"Descripción","idUser":2,"state":"PROCESSING","active":true}
+```
+
+- GET `/orders`
+  - Descripción: Lista órdenes activas.
+  - Response 200: Array de `OrderDto`.
+  - Parámetros opcionales: `userId` (query) para filtrar por usuario.
+
+- GET `/orders/{id}`
+  - Descripción: Obtiene una orden por `id`.
+  - Response 200: `OrderDto`.
+  - Response 404: Orden no encontrada.
+
+- GET `/orders/{id}/user`
+  - Descripción: Obtiene la orden enriquecida con información de usuario.
+  - Response 200: `OrderWithUserDto` (contiene campos de `OrderDto` + `user` con estructura `UserResponse`).
+  - Ejemplo response:
+
+```json
+{
+  "id":10,
+  "name":"Pedido 1",
+  "description":"Descripción",
+  "idUser":2,
+  "state":"PROCESSING",
+  "active":true,
+  "user":{ "id":2,"name":"Bob","mail":"bob@example.com","active":true }
+}
+```
+
+- GET `/orders/user/{userId}`
+  - Descripción: Lista órdenes por `idUser` (activas).
+  - Response 200: Array de `OrderDto`.
+
+- GET `/orders/all`
+  - Descripción: Endpoint administrativo que devuelve todas las órdenes (incluye inactivas).
+  - Response 200: Array de `OrderDto`.
+
+- PATCH `/orders/{id}`
+  - Descripción: Cambia el estado de la orden. Espera `OrderStateUpdateDto` con el campo `state`.
+  - Request body: `OrderStateUpdateDto` { "state": "PROCESSING|TRAVELING_TO_WAREHOUSE|...|DELIVERED|CANCELED" }
+  - Response 200: `OrderDto` actualizado.
+  - Response 400: Validación (p.ej. estado nulo o transición inválida manejada por la lógica de negocio).
+  - Response 404: Orden no encontrada.
+
+- DELETE `/orders/{id}`
+  - Descripción: Elimina (soft-delete) una orden por `id`. Implementación actual marca `active=false` en lugar de borrar físicamente.
+  - Response 204: Eliminación exitosa (sin body).
+  - Response 404: Orden no encontrada.
+
+DTOs relacionadas (resumen):
+
+- `OrderDto`:
+  - `id` (int, read-only), `name` (string), `description` (string), `idUser` (int), `state` (enum, read-only), `active` (boolean, read-only)
+
+- `OrderWithUserDto`:
+  - Igual a `OrderDto` + `user` (estructura `UserResponse` / `UserResponse` utilizada por mensajería)
+
+- `OrderStateUpdateDto`:
+  - `state` (enum `State`) — valores permitidos: `PROCESSING`, `TRAVELING_TO_WAREHOUSE`, `IN_WAREHOUSE`, `TRAVELING_TO_YOUR_HOUSE`, `ON_THE_STREET`, `DELIVERED`, `CANCELED`
+
+---
+
+## 2. Visión General de la Arquitectura Actual
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                              CAPA FRONTEND                               │
+│                         React 18.3 + Vite + TypeScript                  │
+│                              Puerto: 3000                                │
+└─────────────────────────────────┬───────────────────────────────────────┘
+                                  │ HTTP/REST
+              ┌───────────────────┴───────────────────┐
+              ▼                                       ▼
+┌─────────────────────────┐              ┌─────────────────────────┐
+│    usuario-service      │◄────────────►│    pedido-service       │
+│    Puerto: 8083 (ext)   │   RabbitMQ   │    Puerto: 8082 (ext)   │
+│    Puerto: 8081 (int)   │              │    Puerto: 8080 (int)   │
+│    /users               │              │    /order/*             │
+└───────────┬─────────────┘              └───────────┬─────────────┘
+            │                                        │
+            └──────────────┬─────────────────────────┘
+                           ▼
+              ┌─────────────────────────┐
+              │       PostgreSQL        │
+              │       Puerto: 5432      │
+              │                         │
+              │  users_db | orders_db   │
+              └─────────────────────────┘
+                           │
+              ┌─────────────────────────┐
+              │       RabbitMQ          │
+              │    AMQP: 5672           │
+              │    Management: 15672    │
+              │                         │
+              │  user-exchange (direct) │
+              │  user-request-queue     │
+              │  user-response-queue    │
+              └─────────────────────────┘
+```
+
+---
+
+## 3. Puntos de Dolor Identificados ("Dolores")
+
+### 🔴 CRÍTICO — Acción Inmediata Requerida
+
+---
+
+#### DOLOR-001: Contraseñas Almacenadas en Texto Plano
+
+**Severidad:** 🔴 CRÍTICO  
+**Impacto:** Brecha de seguridad, violación OWASP, potencial incumplimiento GDPR  
+**Ubicación:** `Backend/usuario-service/data/users.json`, `users.json`
+
+**Estado Actual:**
+```json
+{
+  "password": "alice123",
+  "password": "bob123"
+}
+```
+
+**Evaluación de Riesgo:**
+- Exposición completa de credenciales si los archivos de datos son comprometidos
+- Viola OWASP Top 10 (A02:2021 – Fallas Criptográficas)
+- Sin algoritmo de hash de contraseñas implementado
+
+**Solución Recomendada:**
+- Implementar hash BCrypt con factor de fuerza ≥12
+- Migrar contraseñas existentes a través de flujo de reset forzado
+- Añadir validación de política de contraseñas (mín 8 chars, mayúsculas, minúsculas, números)
+
+**Esfuerzo Estimado:** 6-8 horas
+
+---
+
+#### DOLOR-002: Logging Primitivo con System.out/printStackTrace
+
+**Severidad:** 🔴 ALTO  
+**Impacto:** Cero observabilidad, debugging imposible en producción, riesgo de seguridad (stack traces expuestos)  
+**Ocurrencias:** 7 instancias identificadas
+
+**Componentes Afectados:**
+| Servicio | Clase | Cantidad |
+|----------|-------|----------|
+| usuario-service | UserServiceProducer | 1 |
+| usuario-service | UserServiceConsumer | 2 |
+| pedido-service | OrderRepository | 2 (`printStackTrace`) |
+| pedido-service | UserServiceProducer | 1 |
+| pedido-service | UserServiceConsumer | 1 |
+
+**Anti-patrón Actual:**
+```java
+System.out.println("Procesando solicitud...");
+e.printStackTrace();
+```
+
+**Consecuencias:**
+- Sin niveles de log (DEBUG, INFO, WARN, ERROR)
+- Sin timestamps ni IDs de correlación
+- Sin formato estructurado para agregación de logs
+- Riesgo de seguridad: stack traces pueden exponer rutas internas
+
+**Solución Recomendada:**
+- Migrar a SLF4J + Logback
+- Implementar logging estructurado en JSON
+- Añadir propagación de ID de correlación entre servicios
+- Configurar niveles de log por ambiente
+
+**Esfuerzo Estimado:** 6 horas
+
+---
+
+#### DOLOR-003: RabbitMQ Sin Patrones de Resiliencia
+
+**Severidad:** 🔴 ALTO  
+**Impacto:** Pérdida de mensajes, fugas de memoria, fallas en cascada  
+**Ubicación:** `RabbitMQConfig.java` en ambos servicios
+
+**Características de Resiliencia Faltantes:**
+| Característica | Estado | Riesgo |
+|----------------|--------|--------|
+| Dead Letter Queue (DLQ) | ❌ Faltante | Mensajes perdidos en falla |
+| Retry con backoff | ❌ Faltante | Reintentos rápidos infinitos en errores transitorios |
+| Circuit breaker | ❌ Faltante | Fallas en cascada |
+| TTL de mensajes | ❌ Faltante | Agotamiento de memoria de cola |
+| Monitoreo de salud | ❌ Faltante | Fallas silenciosas |
+
+**Comportamiento Actual de Timeout:**
+```java
+// OrderService.java
+USER_REQUEST_TIMEOUT = 3000ms // Hardcodeado, sin retry
+```
+
+**Consecuencias:**
+- Mensajes fallidos se descartan silenciosamente
+- Sin visibilidad de fallas de procesamiento
+- La memoria puede crecer sin límites si el consumidor es lento
+- Timeout de 3 segundos muy corto para arranques en frío
+
+**Solución Recomendada:**
+1. Configurar DLQ para ambas colas
+2. Implementar retry con backoff exponencial (3 intentos)
+3. Añadir patrón circuit breaker con Resilience4j
+4. Establecer TTL de mensajes y límites de cola
+5. Hacer timeout configurable vía `application.properties`
+
+**Esfuerzo Estimado:** 8-12 horas
+
+---
+
+### 🟡 MEDIO — Debe Abordarse Pronto
+
+---
+
+#### DOLOR-004: Confusión de Modo Dual de Persistencia (JSON vs PostgreSQL)
+
+**Severidad:** 🟡 MEDIO  
+**Impacto:** Confusión de desarrolladores, inconsistencia de datos, errores de despliegue  
+**Ubicación:** `docker-compose.yml`, `Backend/*/data/*.json`, copilot-instructions.md
+
+**Documentación Contradictoria Actual:**
+- `docker-compose.yml` configura PostgreSQL con scripts de inicialización
+- `HANDOVER_REPORT.md` indica: "La persistencia demo está respaldada por archivos JSON"
+- `copilot-instructions.md` indica: "PostgreSQL es la única fuente de verdad"
+- `MIGRATION_ENABLED=false` deshabilita migraciones de base de datos por defecto
+
+**Matriz de Confusión:**
+| Modo | Fuente de Datos | MIGRATION_ENABLED | Estado |
+|------|-----------------|-------------------|--------|
+| Desarrollo | Archivos JSON | false | Por defecto |
+| Docker Compose | PostgreSQL | configurable | Disponible |
+| Producción | PostgreSQL | true | Previsto |
+
+**Consecuencias:**
+- Desarrolladores editan JSON pensando que afecta al sistema en ejecución
+- Desajustes de ambiente entre dev/staging/prod
+- Sin ruta clara para migración de datos
+
+**Solución Recomendada:**
+1. Remover archivos JSON de la ruta de runtime (mantener solo para fixtures de test)
+2. Por defecto `MIGRATION_ENABLED=true` en docker-compose
+3. Añadir documentación clara sobre modos de persistencia
+4. Crear scripts de migración para datos semilla
+
+**Esfuerzo Estimado:** 4-6 horas
+
+---
+
+#### DOLOR-005: Inconsistencias de API REST
+
+**Severidad:** 🟡 MEDIO  
+**Impacto:** Pobre ergonomía de API, confusión de clientes, comportamiento no estándar  
+**Ubicación:** `OrderController.java`, `UsuarioController.java`
+
+##### 📂 Análisis Detallado por Servicio
+
+---
+
+###### **pedido-service** (controller base: `/order`)
+
+| Endpoint | Problema Detectado | Impacto | Severidad |
+|----------|-------------------|---------|-----------|
+| `POST /order/add` | Retorna `200 OK` en creación en vez de `201 Created`. No incluye `Location` header. | Consumidores no pueden diferenciar entre creación y respuesta normal; rompe expectativas REST. | 🟠 Medio |
+| `POST /order/add` | Verbo en URL (`add`) | No es REST idiomático. Debería ser `POST /orders`. | 🟠 Medio |
+| `DELETE /order/{id}` | Retorna `200 OK` vacío; usa `IllegalArgumentException` para not-found. | `204 No Content` es más apropiado. Excepciones deberían mapearse a `404`. | 🟢 Mejora |
+| `GET /order/{id}` | Correcto retorno `404` cuando no existe. | Sin problemas graves. Mantener DTOs. | 🟢 OK |
+| `GET /order/{id}/with-user-info` | Captura `Exception`, escribe en `System.err` y retorna `500` sin body estructurado. | Logging inconsistente, falta formato uniforme para errores, dificulta trazabilidad y parsing por clientes. | 🟠 Medio |
+| `GET /order/user/{idUser}` | Convención `/user/{idUser}` funcional pero no REST idiomática. | Usar `/orders?userId={id}` o `/users/{id}/orders` para coherencia. | 🟢 Mejora |
+| `GET /order/all` | Sufijo `/all` redundante. | Debería ser simplemente `GET /orders`. | 🟢 Mejora |
+| `PATCH /order/{id}` | Uso apropiado de `PATCH` para cambio de estado; valida `state` y retorna `400` si falta. | Documentar contrato del body. Considerar `PUT` vs `PATCH`. | 🟢 Mejora |
+
+**Problema Estructural Crítico:** `pedido-service` carece de `@ControllerAdvice` para manejo global de excepciones.
+
+---
+
+###### **usuario-service** (controller base: `/users`)
+
+| Endpoint | Problema Detectado | Impacto | Severidad |
+|----------|-------------------|---------|-----------|
+| **Observación Global** | Capa de Controller delgada, usa DTOs, validación JSR-380, existe `GlobalExceptionHandler` que mapea correctamente `404`, `409`, `400`, `500` con cuerpos `ErrorResponse`. | Buen cumplimiento de responsabilidades. | 🟢 OK |
+| **Consistencia de ruta** | ✅ RESUELTO - `@RequestMapping` y `API_PATH` ahora son consistentes en `/users`. | Path simplificado, sin context-path. | 🟢 OK |
+| `POST /users` | Retorna `201 Created` correctamente, pero NO establece `Location` header. | No cumple completamente buenas prácticas REST. | 🟢 Mejora |
+| `PUT /users/{id}` | Buen uso de verbo `PUT` para reemplazo completo. | OK | 🟢 OK |
+| `PATCH /users/{id}` | Buen uso de verbo `PATCH` para actualización parcial. | OK | 🟢 OK |
+| `DELETE /users/{id}` | Retorna `204 No Content` correctamente. Errores mapeados a `404` por `GlobalExceptionHandler`. | OK | 🟢 OK |
+
+---
+
+##### 🔎 Hallazgos Transversales
+
+| Hallazgo | Descripción | Recomendación |
+|----------|-------------|---------------|
+| **Manejo global de errores** | `usuario-service` tiene `GlobalExceptionHandler` con formatos consistentes. `pedido-service` carece de equivalente. | Añadir `@ControllerAdvice` a `pedido-service`. |
+| **Códigos de estado en creación** | `pedido-service` retorna `200` en `POST`. | Normalizar a `201 Created` + `Location` header. |
+| **Nomenclatura REST** | Rutas con verbos (`/add`) y sufijos redundantes (`/all`). | Preferir rutas plurales (`/orders`, `/users`) sin verbos. |
+| **Logging y trazabilidad** | Uso de `System.err` y `println`. | Usar logger y correlación de request IDs. |
+| **Consistencia en constantes** | ✅ RESUELTO en `usuario-service` - Path simplificado a `/users`. | Aplicar mismo patrón a `pedido-service`. |
+| **Errores y exposición** | Posible retorno de stacktraces al cliente. | Retornar mensajes genéricos; registrar detalles en servidor. |
+
+---
+
+##### Solución Recomendada
+
+1. **`pedido-service`:** Implementar `GlobalExceptionHandler` (`@ControllerAdvice`) con manejo de excepciones específicas (`OrderNotFoundException` → `404`)
+2. **`pedido-service`:** Cambiar `POST /order/add` para retornar `201 Created` + header `Location: /order/{id}`
+3. **Ambos servicios:** Normalizar endpoints a sustantivos plurales (`/orders`, `/usuarios`)
+4. **`usuario-service`:** Unificar constante `API_PATH` con `@RequestMapping`
+5. **Ambos servicios:** Añadir header `Location` en creación de recursos
+
+**Esfuerzo Estimado:** 4-6 horas
+
+---
+
+#### DOLOR-006: Anti-patrón de Inyección de Campo
+
+**Severidad:** 🟡 MEDIO  
+**Impacto:** Código no testeable, dependencias ocultas, riesgos de null pointer  
+**Ocurrencias:** 19 inyecciones de campo `@Autowired`
+
+**Anti-patrón Actual:**
+```java
+@Autowired
+private UserRepository userRepository;
+
+@Autowired
+private RabbitTemplate rabbitTemplate;
+```
+
+**Problemas:**
+- No se pueden usar campos final (inmutabilidad)
+- Más difícil escribir tests unitarios con mocks
+- Oculta dependencias de la clase
+- Requiere contenedor Spring para instanciación
+
+**Patrón Recomendado:**
+```java
+private final UserRepository userRepository;
+private final RabbitTemplate rabbitTemplate;
+
+public UserService(UserRepository userRepository, RabbitTemplate rabbitTemplate) {
+    this.userRepository = userRepository;
+    this.rabbitTemplate = rabbitTemplate;
+}
+```
+
+**Esfuerzo Estimado:** 3-4 horas
+
+---
+
+#### DOLOR-007: Máquina de Estados Faltante para Transiciones de Pedidos
+
+**Severidad:** 🟡 MEDIO  
+**Impacto:** Estados de negocio inválidos, corrupción de datos  
+**Ubicación:** `OrderService.java`, `State.java`
+
+**Enum de Estado Actual:**
+```
+PROCESSING → TRAVELING_TO_WAREHOUSE → DELIVERED
+```
+
+**Problema:** Sin validación de reglas de transición. El sistema permite:
+- `DELIVERED → PROCESSING` (inválido)
+- `TRAVELING_TO_WAREHOUSE → PROCESSING` (inválido)
+
+**Solución Recomendada:**
+```java
+Map<State, Set<State>> TRANSICIONES_VALIDAS = Map.of(
+    State.PROCESSING, Set.of(State.TRAVELING_TO_WAREHOUSE),
+    State.TRAVELING_TO_WAREHOUSE, Set.of(State.DELIVERED),
+    State.DELIVERED, Collections.emptySet()
+);
+```
+
+**Esfuerzo Estimado:** 4 horas
+
+---
+
+### 🟢 BAJO — Mejoras de Calidad
+
+---
+
+#### DOLOR-008: Health Checks de Docker Faltantes
+
+**Severidad:** 🟢 BAJO  
+**Impacto:** Condiciones de carrera en arranque, falsos positivos en orquestación  
+**Ubicación:** `docker-compose.yml`
+
+**Estado Actual:**
+- PostgreSQL tiene health check ✅
+- RabbitMQ NO tiene health check ❌
+- Servicios arrancan antes de que RabbitMQ esté listo
+
+**Solución Recomendada:**
+```yaml
+rabbitmq:
+  healthcheck:
+    test: ["CMD", "rabbitmq-diagnostics", "check_port_connectivity"]
+    interval: 5s
+    timeout: 10s
+    retries: 5
+```
+
+**Esfuerzo Estimado:** 2 horas
+
+---
+
+#### DOLOR-009: Documentación de API Faltante (OpenAPI/Swagger)
+
+**Severidad:** 🟢 BAJO  
+**Impacto:** Fricción de integración, contratos no documentados  
+**Estado:** Sin Swagger/OpenAPI configurado
+
+**Solución Recomendada:**
+- Añadir dependencia `springdoc-openapi-starter-webmvc-ui`
+- Anotar endpoints con anotaciones OpenAPI
+- Generar especificación para equipo frontend
+
+**Esfuerzo Estimado:** 4 horas
+
+---
+
+#### DOLOR-010: Cobertura de Tests Por Debajo del Objetivo
+
+**Severidad:** 🟢 BAJO  
+**Impacto:** Riesgo de regresión, miedo a refactorizar  
+
+**Cobertura Actual:**
+| Servicio | Cobertura | Objetivo |
+|----------|-----------|----------|
+| usuario-service | 50%+ | 70% |
+| pedido-service | 70%+ | 70% |
+| Frontend | 70%+ | ✅ Cumplido |
+
+**Solución Recomendada:**
+- Añadir tests de casos límite para lógica de validación
+- Añadir tests de integración para flujos de RabbitMQ
+- Añadir tests de escenarios negativos
+
+**Esfuerzo Estimado:** 6-8 horas
+
+---
+
+## 4. Mapa de Dependencias (Análisis de Acoplamiento)
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                      RIESGOS DE ACOPLAMIENTO                     │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  pedido-service ──────┬─────── usuario-service                  │
+│         │             │              │                           │
+│         │    DTOs Compartidos        │                           │
+│         │    UserRequest             │                           │
+│         │    UserResponse            │                           │
+│         │             │              │                           │
+│         └─────────────┴──────────────┘                           │
+│                       │                                          │
+│            ⚠️ Riesgo de cambios disruptivos                      │
+│            Cambios en estructura de DTO requieren                │
+│            despliegue sincronizado de ambos servicios            │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Puntos de Acoplamiento Fuerte:**
+1. DTOs `UserRequest` / `UserResponse` deben ser idénticos entre servicios
+2. Nombres de colas RabbitMQ hardcodeados en ambos servicios
+3. Clientes de servicio del frontend dependen de rutas de endpoint exactas
+
+---
+
+## 5. Resumen de Deuda Técnica
+
+| ID | Punto de Dolor | Severidad | Esfuerzo | Prioridad |
+|----|----------------|-----------|----------|-----------|
+| DOLOR-001 | Contraseñas en texto plano | 🔴 Crítico | 6-8h | P0 |
+| DOLOR-002 | Logging con System.out | 🔴 Alto | 6h | P0 |
+| DOLOR-003 | RabbitMQ sin resiliencia | 🔴 Alto | 8-12h | P0 |
+| DOLOR-004 | Confusión de persistencia | 🟡 Medio | 4-6h | P1 |
+| DOLOR-005 | Inconsistencias REST | 🟡 Medio | 4-6h | P1 |
+| DOLOR-006 | Inyección de campo | 🟡 Medio | 3-4h | P1 |
+| DOLOR-007 | Sin máquina de estados | 🟡 Medio | 4h | P1 |
+| DOLOR-008 | Healthchecks faltantes | 🟢 Bajo | 2h | P2 |
+| DOLOR-009 | Sin docs de API | 🟢 Bajo | 4h | P2 |
+| DOLOR-010 | Cobertura de tests | 🟢 Bajo | 6-8h | P2 |
+
+**Remediación Total Estimada:** 47-62 horas
+
+---
+
+## 6. Matriz de Evaluación de Riesgos
+
+```
+              IMPACTO
+         Bajo   Medio   Alto
+        ┌──────┬──────┬──────┐
+  Alto  │      │      │ D001 │
+        │      │      │ D002 │
+PROB.   │      │      │ D003 │
+        ├──────┼──────┼──────┤
+  Medio │      │ D004 │      │
+        │      │ D005 │      │
+        │      │ D006 │      │
+        │      │ D007 │      │
+        ├──────┼──────┼──────┤
+  Bajo  │ D008 │ D009 │      │
+        │ D010 │      │      │
+        └──────┴──────┴──────┘
+```
+
+---
+
+## 7. Prioridad de Corrección (Sugerida)
+
+### 🔴 Alta (Arreglos recomendados inmediatamente)
+
+| Acción | Servicio | Severidad | Esfuerzo |
+|--------|----------|-----------|----------|
+| Implementar hash BCrypt para passwords | usuario-service | 🔴 Crítico | 6-8h |
+| Migrar a SLF4J + Logback | Ambos | 🔴 Alto | 6h |
+| Implementar `@ControllerAdvice` y remover `System.err` | pedido-service | 🟠 Medio | 3h |
+| Cambiar `POST /order/add` → `201 Created` + `Location` | pedido-service | 🟠 Medio | 2h |
+| Configurar DLQ y retry en RabbitMQ | Ambos | 🔴 Alto | 8-12h |
+
+### 🟡 Media
+
+| Acción | Servicio | Severidad | Esfuerzo |
+|--------|----------|-----------|----------|
+| Unificar rutas y constantes (`API_PATH` vs `@RequestMapping`) | usuario-service | 🟠 Medio | 1h |
+| Normalizar paths a plural (`/orders`, `/usuarios`) | pedido-service | 🟢 Mejora | 2h |
+| Eliminar sufijos `/all` y `/add` | pedido-service | 🟢 Mejora | 1h |
+| Implementar máquina de estados | pedido-service | 🟡 Medio | 4h |
+
+### 🟢 Baja
+
+| Acción | Servicio | Severidad | Esfuerzo |
+|--------|----------|-----------|----------|
+| Añadir healthcheck de RabbitMQ | Infra | 🟢 Bajo | 2h |
+| Generar documentación OpenAPI | Ambos | 🟢 Bajo | 4h |
+| Aumentar cobertura de tests | Ambos | 🟢 Bajo | 6-8h |
+
+---
+
+## 8. Plan de Acción Recomendado
+
+### Fase 1: Seguridad Crítica y Observabilidad (Semana 1)
+1. ✅ Implementar hash de contraseñas BCrypt (DOLOR-001)
+2. ✅ Migrar a logging estructurado SLF4J (DOLOR-002)
+3. ✅ Añadir `GlobalExceptionHandler` a pedido-service (DOLOR-005)
+4. ✅ Corregir códigos HTTP en pedido-service (DOLOR-005)
+
+### Fase 2: Resiliencia y Consistencia (Semana 2)
+5. ✅ Configurar DLQ y retry de RabbitMQ (DOLOR-003)
+6. ✅ Clarificar estrategia de persistencia (DOLOR-004)
+7. ✅ Implementar máquina de estados (DOLOR-007)
+8. ✅ Refactorizar a inyección por constructor (DOLOR-006)
+
+### Fase 3: Calidad de Código y Documentación (Semana 3)
+9. ✅ Normalizar nomenclatura REST (DOLOR-005)
+10. ✅ Añadir healthchecks de Docker (DOLOR-008)
+11. ✅ Generar documentación OpenAPI (DOLOR-009)
+12. ✅ Aumentar cobertura de tests (DOLOR-010)
+
+---
+
+## 9. Conclusión
+
+El proyecto demuestra una base sólida de microservicios con separación apropiada de responsabilidades. Sin embargo, **vulnerabilidades de seguridad críticas** (contraseñas en texto plano) y **brechas de observabilidad** (logging primitivo) deben abordarse inmediatamente antes de cualquier despliegue a producción.
+
+**Riesgos técnicos principales:**
+- Consumidores pueden interpretar incorrectamente resultados (`200` vs `201`/`404`/`204`)
+- Errores sin formato consistente dificultan el manejo de fallos en clientes
+
+Los problemas de prioridad media alrededor de consistencia de API y patrones de resiliencia deben seguir para asegurar un sistema mantenible y escalable.
+
+**Bloqueadores inmediatos para producción:**
+- 🔴 DOLOR-001: Seguridad de contraseñas
+- 🔴 DOLOR-002: Infraestructura de logging
+- 🔴 DOLOR-003: Resiliencia de mensajería
+- 🟠 DOLOR-005: Inconsistencias REST (particularmente en `pedido-service`)
+
+---
+
+## 10. Análisis Arquitectónico: Estado Actual vs Clean Architecture
+
+Esta sección analiza la estructura interna de cada microservicio y contrasta teóricamente los beneficios de migrar hacia una **Clean Architecture** (también conocida como Arquitectura Hexagonal o Ports & Adapters).
+
+---
+
+### 10.1 Estructura Actual de `usuario-service`
+
+```
+usuario-service/
+├── src/main/java/com/example/usuarioservice/
+│   ├── config/                    # Configuración Spring
+│   ├── controller/                # Capa de presentación REST
+│   │   └── UsuarioController.java
+│   ├── dto/                       # Data Transfer Objects
+│   │   ├── CreateUsuarioRequest.java
+│   │   ├── UpdateUsuarioRequest.java
+│   │   └── UsuarioResponse.java
+│   ├── entity/                    # Entidades JPA
+│   │   └── UserEntity.java
+│   ├── exception/                 # Excepciones custom + GlobalExceptionHandler
+│   ├── mapper/                    # Mappers (entidad ↔ modelo ↔ DTO)
+│   ├── messaging/                 # RabbitMQ consumers/producers
+│   ├── model/                     # Modelo de dominio
+│   │   └── User.java
+│   ├── persistence/               # Abstracción de persistencia
+│   │   ├── IUserPersistence.java              # ✅ Interfaz (Port)
+│   │   ├── UserJpaPersistence.java            # Adapter JPA
+│   │   └── CachedUserPersistenceDecorator.java # Decorator pattern
+│   ├── repository/                # Spring Data JPA
+│   │   └── UserJpaRepository.java
+│   ├── service/                   # Lógica de negocio
+│   │   ├── IUsuarioService.java   # ✅ Interfaz de casos de uso
+│   │   ├── UsuarioService.java    # Implementación
+│   │   └── UserRepository.java    # (legacy)
+│   └── validation/                # Strategy pattern para validación
+│       ├── IValidationStrategy.java
+│       ├── LenientValidationStrategy.java
+│       ├── StrictValidationStrategy.java
+│       └── ValidationContext.java
+```
+
+#### Evaluación de `usuario-service`
+
+| Aspecto | Estado | Observaciones |
+|---------|--------|---------------|
+| **Separación de capas** | 🟢 Buena | Controller → Service → Persistence bien diferenciados |
+| **Inversión de dependencias** | 🟢 Implementado | `IUserPersistence`, `IUsuarioService`, `IValidationStrategy` |
+| **Patrones de diseño** | 🟢 Múltiples | Strategy (validación), Decorator (cache), Factory implícito |
+| **Modelo de dominio** | 🟡 Parcial | `User.java` existe pero mezcla concerns con DTOs |
+| **Independencia del framework** | 🟡 Parcial | Service depende de DTOs de Spring (`@Valid`) |
+| **Testabilidad** | 🟢 Buena | Interfaces permiten mocking fácil |
+
+**Fortalezas detectadas:**
+- Uso de interfaces (`IUserPersistence`, `IUsuarioService`) que actúan como "puertos"
+- Pattern Strategy para validación configurable
+- Pattern Decorator para caching de persistencia
+- GlobalExceptionHandler centralizado
+- Constructor injection con `@RequiredArgsConstructor`
+
+**Debilidades detectadas:**
+- El modelo `User` no es un Rich Domain Model (anémico)
+- No hay capa de Use Cases explícita separada del Service
+- Los DTOs de entrada (`CreateUsuarioRequest`) llegan hasta el Service
+- Falta separación clara entre dominio e infraestructura
+
+---
+
+### 10.2 Estructura Actual de `pedido-service`
+
+```
+pedido-service/
+├── src/main/java/com/example/pedidoservice/
+│   ├── config/                    # Configuración Spring/RabbitMQ
+│   ├── controller/                # Capa REST
+│   │   └── OrderController.java
+│   ├── dto/                       # Data Transfer Objects
+│   │   ├── OrderDto.java
+│   │   └── OrderWithUserDto.java
+│   ├── mapper/                    # MapStruct mappers
+│   │   └── OrderMapper.java
+│   ├── messaging/                 # RabbitMQ integración
+│   │   ├── RabbitMQConfig.java
+│   │   ├── UserRequest.java
+│   │   ├── UserResponse.java
+│   │   ├── UserServiceConsumer.java
+│   │   └── UserServiceProducer.java
+│   ├── model/                     # Entidades de dominio/JPA mezcladas
+│   │   ├── Order.java             # ⚠️ Entidad JPA = Modelo dominio
+│   │   └── State.java
+│   ├── repository/                # Acceso a datos
+│   │   ├── OrderJpaRepository.java  # Spring Data JPA
+│   │   └── OrderRepository.java     # (legacy JSON-based)
+│   └── service/                   # Lógica de negocio
+│       └── OrderService.java      # ⚠️ Sin interfaz
+```
+
+#### Evaluación de `pedido-service`
+
+| Aspecto | Estado | Observaciones |
+|---------|--------|---------------|
+| **Separación de capas** | 🟡 Básica | Controller → Service → Repository, pero acopladas |
+| **Inversión de dependencias** | 🔴 Ausente | `OrderService` no implementa interfaz |
+| **Patrones de diseño** | 🔴 Mínimos | Sin Strategy, sin Decorator, sin Factory |
+| **Modelo de dominio** | 🔴 Anémico | `Order.java` es entidad JPA pura, sin comportamiento |
+| **Independencia del framework** | 🔴 Alta dependencia | Service usa `@Autowired`, `@Transactional` directamente |
+| **Testabilidad** | 🟡 Limitada | Sin interfaces → requiere contexto Spring para tests |
+
+**Debilidades críticas detectadas:**
+- `Order.java` es simultáneamente entidad JPA y modelo de dominio (violación SRP)
+- `OrderService` usa field injection (`@Autowired`) en 4 dependencias
+- No existe `IOrderService` — acoplamiento directo Controller→ServiceImpl
+- Validación hardcodeada dentro del Service (no reutilizable)
+- Mezcla de responsabilidades: Service hace validación + negocio + orquestación de mensajería
+- Sin GlobalExceptionHandler — manejo de errores inconsistente
+
+---
+
+### 10.3 Comparación Teórica: Arquitectura Actual vs Clean Architecture
+
+#### Diagrama de Clean Architecture (Robert C. Martin)
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         FRAMEWORKS & DRIVERS                            │
+│   (Web, UI, DB, External Interfaces, Devices, etc.)                     │
+│   ┌─────────────────────────────────────────────────────────────────┐   │
+│   │                    INTERFACE ADAPTERS                            │   │
+│   │   (Controllers, Gateways, Presenters, Repositories impl)        │   │
+│   │   ┌─────────────────────────────────────────────────────────┐   │   │
+│   │   │               APPLICATION BUSINESS RULES                │   │   │
+│   │   │               (Use Cases / Interactors)                 │   │   │
+│   │   │   ┌─────────────────────────────────────────────────┐   │   │   │
+│   │   │   │          ENTERPRISE BUSINESS RULES              │   │   │   │
+│   │   │   │          (Entities / Domain Model)              │   │   │   │
+│   │   │   └─────────────────────────────────────────────────┘   │   │   │
+│   │   └─────────────────────────────────────────────────────────┘   │   │
+│   └─────────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────────┘
+
+        La REGLA DE DEPENDENCIA: Las capas internas NO conocen
+        las capas externas. Las dependencias apuntan hacia adentro.
+```
+
+#### Mapeo de Capas: Actual → Clean Architecture
+
+| Capa Clean Architecture | usuario-service | pedido-service |
+|-------------------------|-----------------|----------------|
+| **Entities (Domain)** | `model/User.java` (parcial) | ❌ `model/Order.java` es entidad JPA |
+| **Use Cases** | `service/IUsuarioService.java` | ❌ No existe interfaz |
+| **Interface Adapters (Controllers)** | `controller/UsuarioController.java` ✅ | `controller/OrderController.java` ✅ |
+| **Interface Adapters (Gateways)** | `persistence/IUserPersistence.java` ✅ | ❌ Acoplado a `OrderJpaRepository` |
+| **Frameworks & Drivers** | `repository/`, `config/`, `messaging/` | `repository/`, `config/`, `messaging/` |
+
+---
+
+### 10.4 Beneficios Teóricos de Migrar a Clean Architecture
+
+#### 1. **Independencia del Framework**
+
+| Aspecto | Estado Actual | Con Clean Architecture |
+|---------|---------------|------------------------|
+| Cambiar de Spring Boot a Quarkus | 🔴 Requiere reescribir Services | 🟢 Solo adaptar capa externa |
+| Cambiar de PostgreSQL a MongoDB | 🟡 Modificar Services + Repositories | 🟢 Solo nuevo Adapter de persistencia |
+| Cambiar de RabbitMQ a Kafka | 🔴 Modificar Services directamente | 🟢 Solo nuevo Adapter de mensajería |
+
+**Beneficio:** El núcleo de negocio (Entities + Use Cases) permanece intacto ante cambios tecnológicos.
+
+---
+
+#### 2. **Testabilidad Mejorada**
+
+| Tipo de Test | Estado Actual | Con Clean Architecture |
+|--------------|---------------|------------------------|
+| **Unit Tests de Dominio** | 🟡 Requiere mocks de Spring | 🟢 POJOs puros, sin dependencias |
+| **Unit Tests de Use Cases** | 🟡 Mocks de repositorios Spring | 🟢 Mocks de puertos (interfaces) |
+| **Integration Tests** | 🟡 Contexto Spring completo | 🟢 Solo adapters involucrados |
+
+**Beneficio:** Tests más rápidos, aislados y mantenibles. Cobertura del dominio sin necesidad de levantar Spring.
+
+---
+
+#### 3. **Separación Clara de Responsabilidades**
+
+```
+ESTADO ACTUAL (pedido-service):
+┌─────────────────────────────────────────┐
+│           OrderService.java             │
+│  ┌───────────────────────────────────┐  │
+│  │ • Validación de DTOs             │  │
+│  │ • Lógica de negocio              │  │
+│  │ • Orquestación de mensajería     │  │
+│  │ • Transacciones (@Transactional) │  │
+│  │ • Mapeo entidad ↔ DTO            │  │
+│  └───────────────────────────────────┘  │
+└─────────────────────────────────────────┘
+          ⚠️ VIOLACIÓN DE SRP
+
+CON CLEAN ARCHITECTURE:
+┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐
+│   Use Case:      │  │   Domain:        │  │   Adapter:       │
+│ CreateOrderUC    │  │ Order (Entity)   │  │ OrderJpaAdapter  │
+│                  │  │  - validate()    │  │                  │
+│ • Orquestar      │  │  - changeState() │  │ • Persistir      │
+│ • Invocar domain │  │  - isActive()    │  │ • Traducir       │
+└──────────────────┘  └──────────────────┘  └──────────────────┘
+          ✅ SINGLE RESPONSIBILITY
+```
+
+---
+
+#### 4. **Regla de Dependencia Explícita**
+
+**Problema actual en `pedido-service`:**
+```java
+// OrderService.java - DEPENDENCIAS HACIA AFUERA (violación)
+@Autowired
+private OrderJpaRepository orderJpaRepository;  // Framework específico
+
+@Autowired
+private RabbitTemplate rabbitTemplate;          // Framework específico
+```
+
+**Con Clean Architecture:**
+```java
+// CreateOrderUseCase.java - DEPENDENCIAS HACIA ADENTRO (correcto)
+public class CreateOrderUseCase {
+    private final OrderRepository orderRepository;     // Puerto (interfaz)
+    private final UserGateway userGateway;             // Puerto (interfaz)
+    private final EventPublisher eventPublisher;       // Puerto (interfaz)
+    
+    // Constructor injection - sin @Autowired
+    public CreateOrderUseCase(OrderRepository repo, UserGateway gateway, EventPublisher pub) {
+        this.orderRepository = repo;
+        this.userGateway = gateway;
+        this.eventPublisher = pub;
+    }
+}
+```
+
+---
+
+#### 5. **Modelo de Dominio Rico vs Anémico**
+
+**Estado actual (Modelo Anémico):**
+```java
+// Order.java - Solo datos, sin comportamiento
+@Entity
+public class Order {
+    private Integer id;
+    private String name;
+    private State state;
+    // Solo getters/setters - ANEMIC!
+}
+
+// OrderService.java - Toda la lógica aquí
+public void changeState(Order order, State newState) {
+    // Validación de transición aquí
+    if (order.getState() == State.DELIVERED) {
+        throw new IllegalStateException("Cannot change state of delivered order");
+    }
+    order.setState(newState);
+}
+```
+
+**Con Clean Architecture (Modelo Rico):**
+```java
+// Order.java - Entidad de dominio con comportamiento
+public class Order {
+    private OrderId id;
+    private OrderName name;
+    private OrderState state;
+    
+    // COMPORTAMIENTO EN EL DOMINIO
+    public void transitionTo(OrderState newState) {
+        if (!this.state.canTransitionTo(newState)) {
+            throw new InvalidStateTransitionException(this.state, newState);
+        }
+        this.state = newState;
+        // Puede emitir Domain Events
+    }
+    
+    public boolean isDelivered() {
+        return this.state == OrderState.DELIVERED;
+    }
+}
+```
+
+---
+
+### 10.5 Propuesta de Estructura Clean Architecture
+
+#### Estructura Propuesta para `pedido-service`
+
+```
+pedido-service/
+├── src/main/java/com/example/pedidoservice/
+│   │
+│   ├── domain/                           # 🔵 NÚCLEO - Sin dependencias externas
+│   │   ├── model/
+│   │   │   ├── Order.java                # Entidad de dominio rica
+│   │   │   ├── OrderId.java              # Value Object
+│   │   │   ├── OrderState.java           # Value Object con transiciones
+│   │   │   └── OrderCreatedEvent.java    # Domain Event
+│   │   ├── repository/
+│   │   │   └── OrderRepository.java      # Puerto (interfaz)
+│   │   ├── service/
+│   │   │   └── OrderDomainService.java   # Lógica que no cabe en entidad
+│   │   └── exception/
+│   │       └── InvalidStateTransitionException.java
+│   │
+│   ├── application/                       # 🟢 USE CASES - Orquestación
+│   │   ├── port/
+│   │   │   ├── in/                        # Puertos de entrada
+│   │   │   │   ├── CreateOrderUseCase.java
+│   │   │   │   ├── GetOrderUseCase.java
+│   │   │   │   └── ChangeOrderStateUseCase.java
+│   │   │   └── out/                       # Puertos de salida
+│   │   │       ├── OrderPersistencePort.java
+│   │   │       ├── UserServicePort.java
+│   │   │       └── EventPublisherPort.java
+│   │   ├── service/
+│   │   │   ├── CreateOrderService.java   # Implementa CreateOrderUseCase
+│   │   │   └── GetOrderService.java
+│   │   └── dto/                           # DTOs de aplicación
+│   │       ├── CreateOrderCommand.java
+│   │       └── OrderResult.java
+│   │
+│   └── infrastructure/                    # 🟠 ADAPTERS - Frameworks
+│       ├── adapter/
+│       │   ├── in/
+│       │   │   └── web/
+│       │   │       ├── OrderController.java
+│       │   │       └── OrderRestMapper.java
+│       │   └── out/
+│       │       ├── persistence/
+│       │       │   ├── OrderJpaAdapter.java      # Implementa OrderPersistencePort
+│       │       │   ├── OrderJpaRepository.java   # Spring Data
+│       │       │   ├── OrderJpaEntity.java       # Entidad JPA
+│       │       │   └── OrderPersistenceMapper.java
+│       │       ├── messaging/
+│       │       │   ├── RabbitUserServiceAdapter.java  # Implementa UserServicePort
+│       │       │   └── RabbitEventPublisher.java      # Implementa EventPublisherPort
+│       │       └── rest/
+│       │           └── UserServiceRestAdapter.java    # Alternativa HTTP
+│       └── config/
+│           ├── BeanConfiguration.java     # Wiring de dependencias
+│           └── RabbitMQConfiguration.java
+```
+
+---
+
+### 10.6 Tabla Comparativa de Impacto
+
+| Métrica | Estado Actual | Con Clean Architecture | Mejora |
+|---------|---------------|------------------------|--------|
+| **Acoplamiento** | Alto (Service↔JPA↔RabbitMQ) | Bajo (solo interfaces) | 🟢 60% reducción |
+| **Cobertura tests unitarios** | 50-70% | 85%+ potencial | 🟢 +15-35% |
+| **Tiempo ejecución tests** | ~30s (requiere Spring) | ~5s (POJOs puros) | 🟢 6x más rápido |
+| **Complejidad ciclomática** | Alta (Services monolíticos) | Baja (responsabilidades separadas) | 🟢 Significativa |
+| **Costo de cambio de DB** | 8-16h | 2-4h | 🟢 4x menos esfuerzo |
+| **Costo de cambio de mensajería** | 8-12h | 2-3h | 🟢 4x menos esfuerzo |
+| **Curva de aprendizaje** | Baja | Media-Alta | 🟡 Inversión inicial |
+| **Líneas de código** | ~2,500 | ~3,500 | 🟡 +40% (boilerplate) |
+
+---
+
+### 10.7 Recomendación de Migración
+
+#### Prioridad de Migración por Servicio
+
+| Servicio | Prioridad | Justificación |
+|----------|-----------|---------------|
+| `pedido-service` | 🔴 Alta | Más deuda técnica, sin interfaces, modelo anémico |
+| `usuario-service` | 🟡 Media | Ya tiene algunas abstracciones, migración incremental posible |
+
+#### Estrategia de Migración Incremental
+
+**Fase 1 (2-3 días): Extraer Puertos**
+1. Crear interfaz `IOrderService` en `pedido-service`
+2. Crear interfaz `OrderPersistencePort`
+3. Refactorizar a constructor injection
+
+**Fase 2 (3-4 días): Separar Dominio**
+1. Crear paquete `domain/` con entidades ricas
+2. Mover validación de transiciones a `OrderState`
+3. Separar `OrderJpaEntity` de `Order` (dominio)
+
+**Fase 3 (2-3 días): Crear Use Cases**
+1. Extraer `CreateOrderUseCase` del Service
+2. Extraer `ChangeOrderStateUseCase`
+3. Implementar puertos de salida
+
+**Esfuerzo total estimado:** 40-60 horas (ambos servicios)
+
+---
+
+### 10.8 Conclusión del Análisis Arquitectónico
+
+| Servicio | Madurez Actual | Deuda Arquitectónica |
+|----------|----------------|---------------------|
+| `usuario-service` | 🟢 70% Clean | Baja — ya tiene abstracciones clave |
+| `pedido-service` | 🔴 30% Clean | Alta — requiere refactorización significativa |
+
+**Veredicto:** La migración a Clean Architecture es **recomendable** especialmente para `pedido-service`, donde los beneficios en testabilidad, mantenibilidad y reducción de acoplamiento justifican la inversión. Para `usuario-service`, la migración puede ser incremental aprovechando las abstracciones existentes.
+
+**Beneficio clave:** Un dominio bien encapsulado permitirá evolucionar los microservicios independientemente del framework, facilitando futuras migraciones tecnológicas y mejorando drásticamente la cobertura de tests.
+
+---
+
+*Documento generado por IRISH - Agente de Ingeniería de Requerimientos*  
+*Fuentes: HANDOVER_REPORT.md, API_AUDIT_REPORT.md, análisis de código fuente*  
+*Última actualización: 24 de Febrero, 2026*
+
+## 11 Justificación de dejar el módelo de MVC vs migrar a Clean Architecture
+
+### 11.1. Postura a favor de conservar el esquema MVC
+
+Teniendo en cuenta que el proyecto en su estado actual tiene una arquitectura de Modelo Vista Controlador, y que actualmente tiene pocas funcionalidades, se aboga por conservar el esquema actual **MVC**, esto en virtud de poder cumplir con uno de los 7 principios del Testing **No es posible realizar testing de software exhaustivo**. Bajo esa premisa, parte del equipo de desarrollo plantea la posibilidad de preservar el esquema actual y una vez hayan más requerimientos del cliente migrar hacia el Clean Architecture.
+
+Esto también es procedente en virtud de poder asegurar entregas eficientes y oportunas
+
+### 11.2. Postura en contra de conservar el esquema MVC y migrar a Clean Architecture 
+
+#### Argumento a favor de usar Clean Architecture
+
+Clean Architecture aporta una separación clara entre dominio, casos de uso e infraestructura, lo que reduce el acoplamiento y facilita pruebas unitarias rápidas y confiables. Al aislar la lógica de negocio de frameworks (Spring, JPA, RabbitMQ), los cambios tecnológicos —por ejemplo cambiar la base de datos o el sistema de mensajería— se limitan a adaptadores sin afectar el núcleo de la aplicación. Esto hace más seguras las refactorizaciones, acelera el feedback de testing y disminuye el coste de mantenimiento a largo plazo, especialmente cuando el sistema crece o varios equipos trabajan simultáneamente.
+
+Además, Clean Architecture facilita la creación de dominios ricos (con comportamiento en lugar de entidades anémicas), promueve la inversión de dependencias mediante puertos (interfaces) y mejora la testabilidad y la resiliencia del sistema.
+#### Conclusión operativa
+
+No obstante, dado el alcance actual del proyecto y que hoy sólo existen dos microservicios, la recomendación práctica es mantener el esquema MVC por ahora y centrar los esfuerzos en las correcciones críticas ya identificadas (seguridad, logging, resiliencia, y consistencia de API). No se realizarán refactors masivos hacia Clean Architecture a menos que se cumpla alguna de las siguientes condiciones:
+
+- Se añada un tercer microservicio que aumente la complejidad y el acoplamiento entre servicios, justificando la inversión en una arquitectura por capas más estricta.
+- El cliente solicite explícitamente la migración a Clean Architecture como requisito del proyecto.
+
+Mientras tanto, se sugiere introducir mejoras incrementales y de bajo riesgo que preparen el camino para una futura migración, sin bloquear entregas ni aumentar el riesgo de despliegue.
+
+
+---
+
+## 12. Uso Correcto Semántico de Verbos HTTP
+
+Esta sección establece las convenciones y estándares para el uso apropiado de los verbos HTTP en las APIs REST del proyecto, con las mejores prácticas de la industria.
+
+---
+
+### 12.1 Tabla de Verbos HTTP y su Semántica
+
+| Verbo HTTP | Propósito | Idempotente | Seguro | Cuerpo Request | Cuerpo Response |
+|------------|-----------|-------------|--------|----------------|-----------------|
+| `GET` | Obtener recurso(s) | ✅ Sí | ✅ Sí | ❌ No | ✅ Sí |
+| `POST` | Crear nuevo recurso | ❌ No | ❌ No | ✅ Sí | ✅ Sí |
+| `PUT` | Reemplazar recurso completo | ✅ Sí | ❌ No | ✅ Sí | ✅ Sí |
+| `PATCH` | Actualizar parcialmente | ❌ No* | ❌ No | ✅ Sí | ✅ Sí |
+| `DELETE` | Eliminar recurso | ✅ Sí | ❌ No | ❌ No | ❌ No |
+
+> *PATCH puede ser idempotente dependiendo de la implementación.
+
+---
+
+### 12.2 Códigos de Estado HTTP por Operación
+
+#### 12.2.1 Operaciones de Creación (`POST`)
+
+| Escenario | Código HTTP | Header Requerido | Cuerpo Response |
+|-----------|-------------|------------------|-----------------|
+| Creación exitosa | `201 Created` | `Location: /resource/{id}` | Recurso creado |
+| Datos inválidos | `400 Bad Request` | - | Detalles de error |
+| Recurso ya existe | `409 Conflict` | - | Mensaje de conflicto |
+| Error de servidor | `500 Internal Server Error` | - | Mensaje genérico |
+
+**Ejemplo de respuesta exitosa (201 Created):**
+```http
+HTTP/1.1 201 Created
+Location: /order/42
+Content-Type: application/json
+
+{
+  "id": 42,
+  "name": "Pedido nuevo",
+  "description": "Descripción del pedido",
+  "idUser": 1,
+  "state": "PROCESSING",
+  "active": true
+}
+```
+
+---
+
+#### 12.2.2 Operaciones de Lectura (`GET`)
+
+| Escenario | Código HTTP | Cuerpo Response |
+|-----------|-------------|-----------------|
+| Recurso encontrado | `200 OK` | Recurso solicitado |
+| Lista vacía | `200 OK` | Array vacío `[]` |
+| Recurso no encontrado | `404 Not Found` | Estructura de error |
+| Parámetros inválidos | `400 Bad Request` | Detalles de validación |
+
+**Ejemplo de respuesta recurso no encontrado (404 Not Found):**
+```http
+HTTP/1.1 404 Not Found
+Content-Type: application/json
+
+{
+  "timestamp": "2026-02-24T10:30:00",
+  "status": 404,
+  "error": "Not Found",
+  "message": "Order with id 999 not found",
+  "path": "/order/999"
+}
+```
+
+---
+
+#### 12.2.3 Operaciones de Actualización Completa (`PUT`)
+
+| Escenario | Código HTTP | Cuerpo Response |
+|-----------|-------------|-----------------|
+| Actualización exitosa | `200 OK` | Recurso actualizado |
+| Recurso no encontrado | `404 Not Found` | Estructura de error |
+| Datos inválidos | `400 Bad Request` | Detalles de validación |
+| Conflicto de versión | `409 Conflict` | Mensaje de conflicto |
+
+---
+
+#### 12.2.4 Operaciones de Actualización Parcial (`PATCH`)
+
+| Escenario | Código HTTP | Cuerpo Response |
+|-----------|-------------|-----------------|
+| Actualización exitosa | `200 OK` | Recurso actualizado |
+| Recurso no encontrado | `404 Not Found` | Estructura de error |
+| Campo inválido | `400 Bad Request` | Detalles de validación |
+| Transición de estado inválida | `422 Unprocessable Entity` | Reglas de negocio violadas |
+
+**Ejemplo de actualización de estado:**
+```http
+PATCH /order/42 HTTP/1.1
+Content-Type: application/json
+
+{
+  "state": "TRAVELING_TO_WAREHOUSE"
+}
+```
+
+---
+
+#### 12.2.5 Operaciones de Eliminación (`DELETE`)
+
+| Escenario | Código HTTP | Cuerpo Response |
+|-----------|-------------|-----------------|
+| Eliminación exitosa | `204 No Content` | ❌ Sin cuerpo |
+| Recurso no encontrado | `404 Not Found` | Estructura de error |
+| No se puede eliminar (dependencias) | `409 Conflict` | Mensaje explicativo |
+
+**Ejemplo de eliminación exitosa (204 No Content):**
+```http
+HTTP/1.1 204 No Content
+```
+
+**Ejemplo de eliminación de recurso no existente (404 Not Found):**
+```http
+HTTP/1.1 404 Not Found
+Content-Type: application/json
+
+{
+  "timestamp": "2026-02-24T10:35:00",
+  "status": 404,
+  "error": "Not Found",
+  "message": "Order with id 999 not found",
+  "path": "/order/999"
+}
+```
+
+---
+
+### 12.3 Estructura Estándar de Respuestas de Error
+
+Todas las respuestas de error **DEBEN** seguir la siguiente estructura JSON para garantizar consistencia y facilitar el parsing en clientes:
+
+```json
+{
+  "timestamp": "2026-02-24T10:30:00",
+  "status": 404,
+  "error": "Not Found",
+  "message": "Descripción legible del error",
+  "path": "/order/999"
+}
+```
+
+| Campo | Tipo | Descripción | Requerido |
+|-------|------|-------------|-----------|
+| `timestamp` | `string` (ISO 8601) | Momento en que ocurrió el error | ✅ Sí |
+| `status` | `integer` | Código de estado HTTP | ✅ Sí |
+| `error` | `string` | Nombre estándar del error HTTP | ✅ Sí |
+| `message` | `string` | Descripción legible para humanos | ✅ Sí |
+| `path` | `string` | URI del recurso solicitado | ✅ Sí |
+| `details` | `array` | Detalles adicionales (validación) | ❌ Opcional |
+
+---
+
+### 12.4 Mapeo de Excepciones a Códigos HTTP
+
+#### Implementación Requerida en `@ControllerAdvice`
+
+| Excepción Java | Código HTTP | Nivel de Log |
+|----------------|-------------|--------------|
+| `OrderNotFoundException` | `404 Not Found` | `WARN` |
+| `UsuarioNotFoundException` | `404 Not Found` | `WARN` |
+| `IllegalArgumentException` | `400 Bad Request` | `WARN` |
+| `MethodArgumentNotValidException` | `400 Bad Request` | `WARN` |
+| `ConstraintViolationException` | `400 Bad Request` | `WARN` |
+| `DataIntegrityViolationException` | `409 Conflict` | `WARN` |
+| `InvalidStateTransitionException` | `422 Unprocessable Entity` | `WARN` |
+| `Exception` (genérica) | `500 Internal Server Error` | `ERROR` |
+
+**Reglas de logging:**
+- Errores `4xx` → Nivel `WARN` (problema del cliente)
+- Errores `5xx` → Nivel `ERROR` (problema del servidor)
+- **NUNCA** exponer stack traces al cliente
+- **SIEMPRE** registrar stack trace completo en logs del servidor
+
+---
+
+### 12.5 Convenciones de Headers HTTP
+
+#### Headers de Respuesta Requeridos
+
+| Header | Cuándo Usar | Ejemplo |
+|--------|-------------|---------|
+| `Location` | `201 Created`, `301/302 Redirect` | `Location: /order/42` |
+| `Content-Type` | Todas las respuestas con cuerpo | `Content-Type: application/json` |
+| `X-Request-Id` | Todas las respuestas (trazabilidad) | `X-Request-Id: abc-123-def` |
+
+#### Headers de Request Recomendados
+
+| Header | Propósito | Ejemplo |
+|--------|-----------|---------|
+| `Content-Type` | Tipo de contenido enviado | `Content-Type: application/json` |
+| `Accept` | Tipo de contenido esperado | `Accept: application/json` |
+| `X-Request-Id` | Correlación de requests | `X-Request-Id: abc-123-def` |
+
+---
+
+### 12.6 Anti-patrones a Evitar
+
+| ❌ Anti-patrón | ✅ Correcto | Justificación |
+|----------------|-------------|---------------|
+| `POST` retorna `200 OK` en creación | `POST` retorna `201 Created` | Semántica HTTP correcta |
+| `DELETE` retorna `200 OK` vacío | `DELETE` retorna `204 No Content` | Sin cuerpo = 204 |
+| Usar `System.err.println()` para errores | Usar SLF4J logger | Observabilidad y niveles |
+| Exponer stack traces al cliente | Mensaje genérico + log interno | Seguridad |
+| Retornar `500` para not-found | Retornar `404 Not Found` | Código específico |
+| Body de error como string plano | Body de error JSON estructurado | Consistencia de parsing |
+
+---
+
+### 12.7 Matrices de Cumplimiento por Endpoint
+
+#### 12.7.1 pedido-service (Base path: `/order`)
+
+Basado en los criterios de aceptación de **HU-ORD-08**:
+
+| Endpoint | Verbo | Estado Actual | Estado Esperado | Criterio |
+|----------|-------|---------------|-----------------|----------|
+| `/order/add` | `POST` | 🔴 `200 OK` | 🟢 `201 Created` + `Location` | CA-01 |
+| `/order/{id}` | `DELETE` | 🔴 `200 OK` vacío | 🟢 `204 No Content` | CA-02 |
+| `/order/{id}` | `GET` | 🟢 `404` si no existe | 🟢 `404` + body estructurado | CA-03 |
+| `/order/{id}` | `GET` (error) | 🔴 `500` sin body | 🟢 `500` + body genérico | CA-05 |
+| `/order/add` | `POST` (inválido) | 🟡 `400` string | 🟢 `400` + body estructurado | CA-04 |
+| `/order/{id}` | `DELETE` (no existe) | 🔴 `404` sin body | 🟢 `404` + body estructurado | CA-06 |
+| `/order/all` | `GET` | 🟢 `200 OK` | 🟢 `200 OK` | - |
+| `/order/user/{idUser}` | `GET` | 🟢 `200 OK` | 🟢 `200 OK` | - |
+| `/order/{id}` | `PATCH` | 🟢 `200 OK` / `400` | 🟢 `200 OK` / `400` | - |
+| `/order/{id}/with-user-info` | `GET` | 🔴 `System.err` + `500` | 🟢 Logger + body estructurado | - |
+
+**Resumen pedido-service:**
+- ✅ Cumple: 3 endpoints
+- ⚠️ Parcial: 2 endpoints
+- ❌ No cumple: 5 endpoints
+
+---
+
+#### 12.7.2 usuario-service (Base path: `/users`)
+
+| Endpoint | Verbo | Estado Actual | Estado Esperado | Cumple |
+|----------|-------|---------------|-----------------|--------|
+| `/users` | `GET` | 🟢 `200 OK` | 🟢 `200 OK` | ✅ |
+| `/users/{id}` | `GET` | 🟢 `200 OK` / `404` estructurado | 🟢 `200 OK` / `404` estructurado | ✅ |
+| `/users` | `POST` | 🟢 `201 Created` | 🟡 `201 Created` + `Location` | ⚠️ Falta `Location` header |
+| `/users/{id}` | `PUT` | 🟢 `200 OK` / `404` estructurado | 🟢 `200 OK` / `404` estructurado | ✅ |
+| `/users/{id}` | `PATCH` | 🟢 `200 OK` / `404` estructurado | 🟢 `200 OK` / `404` estructurado | ✅ |
+| `/users/{id}` | `DELETE` | 🟢 `204 No Content` / `404` | 🟢 `204 No Content` / `404` | ✅ |
+
+**Resumen usuario-service:**
+- ✅ Cumple: 5 endpoints
+- ⚠️ Parcial: 1 endpoint (POST falta `Location` header)
+- ❌ No cumple: 0 endpoints
+
+---
+
+#### 12.7.3 Comparativa de Madurez REST
+
+| Aspecto | usuario-service | pedido-service |
+|---------|-----------------|----------------|
+| `GlobalExceptionHandler` | ✅ Implementado | ❌ Faltante |
+| Códigos HTTP correctos | 🟢 95% | 🔴 40% |
+| Header `Location` en POST | ⚠️ Faltante | ❌ Faltante |
+| Respuestas de error estructuradas | ✅ Sí | ❌ No |
+| Logging con SLF4J | ✅ Sí | ❌ Usa `System.err` |
+| Validación con `@Valid` | ✅ Sí | ❌ Manual en Service |
+
+**Conclusión:** `usuario-service` está significativamente más maduro en términos de adherencia REST. `pedido-service` requiere implementar las mejoras definidas en **HU-ORD-08** para alcanzar paridad.
+
+---
+
+### 12.8 Checklist de Implementación por Servicio
+
+#### 12.8.1 Checklist General (Ambos Servicios)
+
+Para cumplir con los estándares de verbos HTTP, cada endpoint debe verificar:
+
+- [ ] **POST (Creación)**
+  - [ ] Retorna `201 Created` en éxito
+  - [ ] Incluye header `Location` apuntando al nuevo recurso
+  - [ ] Retorna recurso creado en body
+  - [ ] Valida campos requeridos → `400 Bad Request`
+
+- [ ] **GET (Lectura)**
+  - [ ] Retorna `200 OK` con recurso encontrado
+  - [ ] Retorna `404 Not Found` con body estructurado si no existe
+  - [ ] Lista vacía retorna `200 OK` con `[]`
+
+- [ ] **PUT/PATCH (Actualización)**
+  - [ ] Retorna `200 OK` con recurso actualizado
+  - [ ] Retorna `404 Not Found` si recurso no existe
+  - [ ] Valida transiciones de estado → `422 Unprocessable Entity`
+
+- [ ] **DELETE (Eliminación)**
+  - [ ] Retorna `204 No Content` sin body en éxito
+  - [ ] Retorna `404 Not Found` con body estructurado si no existe
+
+- [ ] **Manejo de Errores Global**
+  - [ ] `GlobalExceptionHandler` con `@RestControllerAdvice`
+  - [ ] Sin `System.err` ni `System.out` en controllers
+  - [ ] Logs con SLF4J a nivel apropiado (WARN/ERROR)
+  - [ ] Body de error con: `timestamp`, `status`, `error`, `message`, `path`
+
+---
+
+#### 12.8.2 Checklist Específico: pedido-service
+
+| Tarea | Prioridad | Estado |
+|-------|-----------|--------|
+| Crear `GlobalExceptionHandler` con `@RestControllerAdvice` | 🔴 Alta | ❌ Pendiente |
+| Crear excepción `OrderNotFoundException` | 🔴 Alta | ❌ Pendiente |
+| Cambiar `POST /order/add` → `201 Created` + `Location` | 🔴 Alta | ❌ Pendiente |
+| Cambiar `DELETE /order/{id}` → `204 No Content` | 🟡 Media | ❌ Pendiente |
+| Remover `System.err` de `OrderController` | 🔴 Alta | ❌ Pendiente |
+| Estructurar respuestas de error en JSON | 🔴 Alta | ❌ Pendiente |
+| Mapear `IllegalArgumentException` → `400 Bad Request` | 🟡 Media | ❌ Pendiente |
+| Añadir logging SLF4J en controller | 🟡 Media | ❌ Pendiente |
+
+---
+
+#### 12.8.3 Checklist Específico: usuario-service
+
+| Tarea | Prioridad | Estado |
+|-------|-----------|--------|
+| `GlobalExceptionHandler` implementado | - | ✅ Completado |
+| Excepción `UsuarioNotFoundException` creada | - | ✅ Completado |
+| `POST` retorna `201 Created` | - | ✅ Completado |
+| `DELETE` retorna `204 No Content` | - | ✅ Completado |
+| Logging con SLF4J | - | ✅ Completado |
+| Respuestas de error estructuradas | - | ✅ Completado |
+| Añadir header `Location` en `POST /users` | 🟢 Baja | ❌ Pendiente |
+| Unificar constante `API_PATH` con `@RequestMapping` | - | ✅ Completado (migrado a `/users`) |

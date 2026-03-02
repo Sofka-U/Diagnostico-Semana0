@@ -3,18 +3,18 @@ package com.example.pedidoservice.service;
 import com.example.pedidoservice.dto.OrderDto;
 import com.example.pedidoservice.dto.OrderWithUserDto;
 import com.example.pedidoservice.mapper.OrderMapper;
-import com.example.pedidoservice.messaging.UserResponse;
-import com.example.pedidoservice.messaging.UserServiceConsumer;
-import com.example.pedidoservice.messaging.UserServiceProducer;
+import com.example.pedidoservice.service.OrderEnrichmentFacade;
 import com.example.pedidoservice.model.Order;
 import com.example.pedidoservice.model.State;
 import com.example.pedidoservice.repository.OrderJpaRepository;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.List;
 import java.util.stream.Collectors;
+import com.example.pedidoservice.exception.OrderNotFoundException;
 
 /**
  * Order Service - Manages order operations with PostgreSQL persistence.
@@ -29,28 +29,25 @@ import java.util.stream.Collectors;
 @Transactional
 public class OrderService {
 
-    @Autowired
-    private OrderJpaRepository orderJpaRepository;
+    private static final Logger log = LoggerFactory.getLogger(OrderService.class);
 
-    @Autowired
-    private OrderMapper orderMapper;
+    private final OrderJpaRepository orderJpaRepository;
 
+    private final OrderMapper orderMapper;
 
-    @Autowired
-    private UserServiceProducer userServiceProducer;
+    private final OrderEnrichmentFacade orderEnrichmentFacade;
 
-    @Autowired
-    private UserServiceConsumer userServiceConsumer;
-
-    private static final long USER_REQUEST_TIMEOUT = 3000; // 3 seconds timeout
-
-    @Autowired
     public OrderService(OrderJpaRepository orderJpaRepository, OrderMapper orderMapper,
-                        UserServiceProducer userServiceProducer, UserServiceConsumer userServiceConsumer) {
+                        OrderEnrichmentFacade orderEnrichmentFacade) {
         this.orderJpaRepository = orderJpaRepository;
         this.orderMapper = orderMapper;
-        this.userServiceProducer = userServiceProducer;
-        this.userServiceConsumer = userServiceConsumer;
+        this.orderEnrichmentFacade = orderEnrichmentFacade;
+    }
+
+    private Order findOrderByIdOrThrow(Integer id) {
+        return orderJpaRepository.findById(id)
+            .filter(Order::isActive)
+            .orElseThrow(() -> new OrderNotFoundException("Pedido con ID " + id + " no encontrado"));
     }
 
     public OrderDto createOrder(OrderDto orderDto) {
@@ -72,9 +69,6 @@ public class OrderService {
          * @throws IllegalArgumentException if validation fails
          */
 
-        // Validar campos requeridos
-        validateOrderDto(orderDto);
-
         // Mapear a entidad
         Order order = orderMapper.toEntity(orderDto);
 
@@ -86,38 +80,14 @@ public class OrderService {
         // El ID es autogenerado por PostgreSQL (@GeneratedValue)
         Order savedOrder = orderJpaRepository.save(order);
 
+        if (savedOrder == null || savedOrder.getId() == null) {
+            throw new com.example.pedidoservice.exception.OrderCreationException("Failed to persist order");
+        }
+
         return orderMapper.toDto(savedOrder);
     }
 
-    /**
-     * Validates required fields for order creation (HU-ORD-05).
-     *
-     * @param orderDto Order data to validate
-     * @throws IllegalArgumentException if any validation fails
-     */
-    private void validateOrderDto(OrderDto orderDto) {
-        if (orderDto == null) {
-            throw new IllegalArgumentException("El pedido no puede ser null");
-        }
-
-        // Validar 'name': no null, no vacío, no blank
-        if (orderDto.getName() == null) {
-            throw new IllegalArgumentException("El campo 'name' es requerido");
-        }
-        if (orderDto.getName().trim().isEmpty()) {
-            throw new IllegalArgumentException("El campo 'name' no puede estar vacío");
-        }
-
-        // Validar 'description': no null
-        if (orderDto.getDescription() == null) {
-            throw new IllegalArgumentException("El campo 'description' es requerido");
-        }
-
-        // Validar 'idUser': debe ser > 0 (también verifica null)
-        if (orderDto.getIdUser() == null || orderDto.getIdUser() <= 0) {
-            throw new IllegalArgumentException("El campo 'idUser' debe ser un valor positivo válido (mayor que cero)");
-        }
-    }
+    
 
     /**
      * Soft-delete an order by ID (sets active=false).
@@ -126,8 +96,7 @@ public class OrderService {
      * @throws IllegalArgumentException if order not found
      */
     public void deleteOrder(Integer id) {
-        Order order = orderJpaRepository.findById(id)
-                .orElseThrow(() -> new IllegalArgumentException("Pedido con ID " + id + " no encontrado"));
+        Order order = findOrderByIdOrThrow(id);
         order.setActive(false);
         orderJpaRepository.save(order);
     }
@@ -141,8 +110,7 @@ public class OrderService {
      * @throws IllegalArgumentException if order not found
      */
     public OrderDto changeStateOrder(Integer id, State newState) {
-        Order order = orderJpaRepository.findById(id)
-                .orElseThrow(() -> new IllegalArgumentException("Pedido con ID " + id + " no encontrado"));
+        Order order = findOrderByIdOrThrow(id);
         order.setState(newState);
         Order savedOrder = orderJpaRepository.save(order);
         return orderMapper.toDto(savedOrder);
@@ -174,32 +142,14 @@ public class OrderService {
          */
         // Get the order first
         OrderDto orderDto = showOrderById(orderId);
-        if (orderDto == null) {
-            return null;
+
+        // Delegate enrichment and DTO composition to the facade
+        OrderWithUserDto enriched = orderEnrichmentFacade.enrich(orderDto);
+        if (enriched == null) {
+            throw new OrderNotFoundException("No se pudo enriquecer el pedido con ID " + orderId);
         }
 
-        // Request user information via RabbitMQ using the orderId's userId
-        Integer idUser = orderDto.getIdUser();
-        UserResponse userResponse = null;
-        try {
-            userServiceProducer.requestUserInfo(idUser);
-            // Wait for user response
-            userResponse = userServiceConsumer.getUserResponse(idUser, USER_REQUEST_TIMEOUT);
-        } catch (Exception ex) {
-            // Log and continue — return order with null user if messaging fails
-            System.err.println("Error requesting/receiving user info for userId=" + idUser + ": " + ex.getMessage());
-        }
-
-        // Map to OrderWithUserDto including user information
-        return new OrderWithUserDto(
-                orderDto.getId(),
-                orderDto.getName(),
-                orderDto.getDescription(),
-                orderDto.getIdUser(),
-                orderDto.getState(),
-                orderDto.isActive(),
-                userResponse
-        );
+        return enriched;
     }
 
 
@@ -247,8 +197,7 @@ public class OrderService {
      * @return Order DTO or null if not found
      */
     public OrderDto showOrderById(Integer id) {
-        return orderJpaRepository.findById(id)
-                .map(orderMapper::toDto)
-                .orElse(null);
+        Order order = findOrderByIdOrThrow(id);
+        return orderMapper.toDto(order);
     }
 }

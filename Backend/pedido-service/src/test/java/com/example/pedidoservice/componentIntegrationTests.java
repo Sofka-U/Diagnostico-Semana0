@@ -5,14 +5,14 @@ import com.example.pedidoservice.dto.OrderDto;
 import com.example.pedidoservice.model.Order;
 import com.example.pedidoservice.model.State;
 import com.example.pedidoservice.service.OrderService;
-import com.example.pedidoservice.repository.OrderRepository;
+import com.example.pedidoservice.repository.OrderJpaRepository;
 import com.example.pedidoservice.mapper.OrderMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Disabled;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.http.ResponseEntity;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -22,9 +22,16 @@ import static org.junit.jupiter.api.Assertions.*;
  * Verifica la integración entre Controller, Service, Repository y Mapper.
  * Prueba flujos de negocio completos del sistema de órdenes.
  */
-@SpringBootTest
+@SpringBootTest(webEnvironment = WebEnvironment.RANDOM_PORT,
+    properties = {
+        "spring.datasource.url=jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1",
+        "spring.datasource.driver-class-name=org.h2.Driver",
+        "spring.jpa.hibernate.ddl-auto=create-drop",
+        "pedido.migration.enabled=false",
+        "spring.autoconfigure.exclude=org.springframework.boot.autoconfigure.amqp.RabbitAutoConfiguration"
+    }
+)
 @DisplayName("Component Integration Tests - Order Service")
-@Disabled("Pruebas de integración antiguas deshabilitadas temporalmente")
 class ComponentIntegrationTests {
 
     @Autowired
@@ -34,15 +41,18 @@ class ComponentIntegrationTests {
     private OrderService orderService;
 
     @Autowired
-    private OrderRepository orderRepository;
+    private OrderJpaRepository orderRepository;
 
     @Autowired
     private OrderMapper orderMapper;
 
     @BeforeEach
     public void setUp() {
-        // Limpia el repositorio antes de cada test
-        orderRepository.findAll().forEach(order -> orderRepository.deleteById(order.getId()));
+        // Limpia el repositorio antes de cada test (soft-delete)
+        orderRepository.findAll().forEach(order -> {
+            order.setActive(false);
+            orderRepository.save(order);
+        });
     }
 
     @Test
@@ -59,7 +69,7 @@ class ComponentIntegrationTests {
 
         // Assert
         assertNotNull(response, "Response should not be null");
-        assertEquals(200, response.getStatusCode().value(), "Status code should be 200");
+        assertEquals(201, response.getStatusCode().value(), "Status code should be 201");
         Object respBody = response.getBody();
         assertNotNull(respBody, "Response body should not be null");
         assertInstanceOf(OrderDto.class, respBody, "Response body should be an OrderDto");
@@ -86,14 +96,17 @@ class ComponentIntegrationTests {
         int orderId = ((OrderDto) createBody).getId();
 
         // Act
-        ResponseEntity<OrderDto> getResponse = orderController.showOrderById(orderId);
+        ResponseEntity<?> getResponse = orderController.showOrderById(orderId);
 
         // Assert
         assertNotNull(getResponse, "Get response should not be null");
         assertEquals(200, getResponse.getStatusCode().value(), "Status code should be 200");
-        assertNotNull(getResponse.getBody(), "Get response body should not be null");
-        assertEquals(orderId, getResponse.getBody().getId(), "Order ID should match");
-        assertEquals("Order for Retrieval", getResponse.getBody().getName(), "Order name should match");
+        Object getBody = getResponse.getBody();
+        assertNotNull(getBody, "Get response body should not be null");
+        assertInstanceOf(OrderDto.class, getBody, "Get response body should be an OrderDto");
+        OrderDto fetchedDto = (OrderDto) getBody;
+        assertEquals(orderId, fetchedDto.getId(), "Order ID should match");
+        assertEquals("Order for Retrieval", fetchedDto.getName(), "Order name should match");
     }
 
     @Test
@@ -112,13 +125,29 @@ class ComponentIntegrationTests {
         int orderId = ((OrderDto) createBody).getId();
 
         // Act
-        ResponseEntity<?> deleteResponse = orderController.deleteOrder(orderId);
-        ResponseEntity<OrderDto> getResponse = orderController.showOrderById(orderId);
+        ResponseEntity<?> deleteResponse = orderController.deactivateOrder(orderId);
+        ResponseEntity<?> getResponse = null;
+        try {
+            getResponse = orderController.showOrderById(orderId);
+        } catch (Exception ignored) {
+            // when calling controller method directly the exception may propagate;
+        }
 
         // Assert
         assertNotNull(deleteResponse, "Delete response should not be null");
-        assertEquals(200, deleteResponse.getStatusCode().value(), "Status code should be 200");
-        assertEquals(404, getResponse.getStatusCode().value(), "Deleted order should return 404");
+        assertEquals(204, deleteResponse.getStatusCode().value(), "Status code should be 204 No Content");
+        // After deletion the retrieval should fail (either 404 response or exception)
+        if (getResponse != null) {
+            assertEquals(404, getResponse.getStatusCode().value(), "Deleted order should return 404");
+        } else {
+            // ensure service/controller throws OrderNotFoundException when requested
+            try {
+                orderController.showOrderById(orderId);
+                fail("Expected OrderNotFoundException when fetching a deleted order");
+            } catch (com.example.pedidoservice.exception.OrderNotFoundException ex) {
+                // expected
+            }
+        }
     }
 
     @Test
@@ -166,7 +195,8 @@ class ComponentIntegrationTests {
         assertNotNull(created2, "Second order should be created");
         assertNotNull(retrieved, "Order should be retrievable");
         assertEquals(created1.getId(), retrieved.getId(), "Retrieved order ID should match");
-        assertEquals(2, orderRepository.findAll().size(), "Repository should contain exactly 2 created orders");
+        // Only active orders should be considered for this assertion
+        assertEquals(2, orderRepository.findAllActive().size(), "Repository should contain exactly 2 active created orders");
     }
 
     @Test
@@ -192,14 +222,14 @@ class ComponentIntegrationTests {
 
     @Test
     @DisplayName("Integration: Non-existent Order Retrieval")
-    public void testNonExistentOrderRetrieval() {
-        // Act
-        ResponseEntity<OrderDto> response = orderController.showOrderById(99999);
-
-        // Assert
-        assertNotNull(response, "Response should not be null");
-        assertEquals(404, response.getStatusCode().value(), "Status code should be 404 for non-existent order");
-        assertNull(response.getBody(), "Response body should be null for non-existent order");
+    public void     testNonExistentOrderRetrieval() {
+        // Assert: direct controller invocation may throw OrderNotFoundException
+        try {
+            orderController.showOrderById(99999);
+            fail("Expected OrderNotFoundException for non-existent order");
+        } catch (com.example.pedidoservice.exception.OrderNotFoundException ex) {
+            assertTrue(ex.getMessage().contains("99999"));
+        }
     }
 
     @Test
@@ -212,8 +242,6 @@ class ComponentIntegrationTests {
         order.setIdUser(8);
         order.setState(State.PROCESSING);
         order.setActive(true);
-        order.setId(100);
-
         // Act
         Order saved = orderRepository.save(order);
         var retrieved = orderRepository.findById(saved.getId());
@@ -223,6 +251,7 @@ class ComponentIntegrationTests {
         assertTrue(retrieved.isPresent(), "Order should be retrievable from repository");
         assertEquals("Persistence Test Order", retrieved.get().getName(), "Order name should persist");
         assertEquals(8, retrieved.get().getIdUser(), "User ID should persist");
+        assertNotNull(retrieved.get().getId(), "Saved order should have generated id");
     }
 
 }

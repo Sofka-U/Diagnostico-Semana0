@@ -13,6 +13,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import java.util.Collection;
+import java.util.List;
 import java.util.stream.Collectors;
 
 /**
@@ -20,34 +21,31 @@ import java.util.stream.Collectors;
  * Responsabilidad única: Mapear requests HTTP a casos de uso del servicio.
  */
 @RestController
-@RequestMapping("/v1/usuarios")
+@RequestMapping("/users")
 @RequiredArgsConstructor
 @Slf4j
 @CrossOrigin(origins = "${app.cors.allowed-origins:http://localhost:3001,http://localhost:3000}")
 public class UsuarioController {
 
-    private static final String API_PATH = "/api/v1/usuarios";
+    private static final String API_PATH = "/users";
     
     private final IUsuarioService usuarioService;
     
     /**
-     * GET /api/v1/usuarios
+     * GET /users
      * Obtiene todos los usuarios
      */
     @GetMapping
     public ResponseEntity<Collection<UsuarioResponse>> obtenerTodos() {
         log.info("GET {} - Obteniendo todos los usuarios", API_PATH);
         
-        Collection<UsuarioResponse> usuarios = usuarioService.obtenerTodos()
-            .stream()
-            .map(UsuarioResponse::from)
-            .collect(Collectors.toList());
-        
+        List<UsuarioResponse> usuarios = mapToResponses(usuarioService.obtenerTodos());
+
         return ResponseEntity.ok(usuarios);
     }
     
     /**
-     * GET /api/v1/usuarios/{identificador}
+     * GET /users/{identificador}
      * Obtiene un usuario por ID o email
      */
     @GetMapping("/{identificador}")
@@ -56,14 +54,15 @@ public class UsuarioController {
         log.info("GET {}/{} - Obteniendo usuario", API_PATH, identificador);
         
         return usuarioService.obtenerPorIdentificador(identificador)
-            .map(u -> ResponseEntity.ok(UsuarioResponse.from(u)))
+            .map(this::mapToResponse)
+            .map(ResponseEntity::ok)
             .orElseThrow(() -> new UsuarioNotFoundException(
                 "Usuario no encontrado: " + identificador
             ));
     }
     
     /**
-     * POST /api/v1/usuarios
+     * POST /users
      * Crea un nuevo usuario
      */
     @PostMapping
@@ -75,11 +74,11 @@ public class UsuarioController {
         
         return ResponseEntity
             .status(HttpStatus.CREATED)
-            .body(UsuarioResponse.from(usuario));
+            .body(mapToResponse(usuario));
     }
     
     /**
-     * PUT /api/v1/usuarios/{id}
+     * PUT /users/{id}
      * Actualiza completamente un usuario
      */
     @PutMapping("/{id}")
@@ -89,12 +88,13 @@ public class UsuarioController {
         log.info("PUT {}/{} - Actualizando usuario", API_PATH, id);
         
         return usuarioService.actualizar(id, request)
-            .map(u -> ResponseEntity.ok(UsuarioResponse.from(u)))
+            .map(this::mapToResponse)
+            .map(ResponseEntity::ok)
             .orElseThrow(() -> new UsuarioNotFoundException("Usuario no encontrado: " + id));
     }
     
     /**
-     * PATCH /api/v1/usuarios/{id}
+     * PATCH /users/{id}
      * Actualiza parcialmente un usuario
      */
     @PatchMapping("/{id}")
@@ -104,12 +104,13 @@ public class UsuarioController {
         log.info("PATCH {}/{} - Actualizando parcialmente usuario", API_PATH, id);
         
         return usuarioService.actualizarParcial(id, request)
-            .map(u -> ResponseEntity.ok(UsuarioResponse.from(u)))
+            .map(this::mapToResponse)
+            .map(ResponseEntity::ok)
             .orElseThrow(() -> new UsuarioNotFoundException("Usuario no encontrado: " + id));
     }
     
     /**
-     * DELETE /api/v1/usuarios/{id}
+     * DELETE /users/{id}
      * Elimina un usuario
      */
     @DeleteMapping("/{id}")
@@ -121,5 +122,29 @@ public class UsuarioController {
         }
         
         return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * Convierte una colección de usuarios a una lista de responses.
+     * Método privado para facilitar testing indirecto.
+     *
+     * @param users Colección de usuarios del dominio
+     * @return Lista de UsuarioResponse
+     */
+    private List<UsuarioResponse> mapToResponses(Collection<User> users) {
+        return users.stream()
+            .map(UsuarioResponse::from)
+            .collect(Collectors.toList());
+    }
+
+    /**
+     * Convierte un usuario del dominio a DTO de respuesta.
+     * Método privado para facilitar testing indirecto.
+     *
+     * @param user Usuario del dominio
+     * @return UsuarioResponse
+     */
+    private UsuarioResponse mapToResponse(User user) {
+        return UsuarioResponse.from(user);
     }
 }
