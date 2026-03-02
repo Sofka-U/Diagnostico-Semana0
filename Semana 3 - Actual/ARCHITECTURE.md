@@ -30,6 +30,152 @@ El sistema consiste en dos microservicios Spring Boot (`usuario-service`, `pedid
 
 ---
 
+## Documentación de Endpoints (DESPUES DE LOS CAMBIOS, REFACTORS Y ARREGLOS EN LOS DEFECTOS ENCONTRADOS EN LAS APIS; ESOS DOLORES SE ENCUENTREN EN ESTE DOCUMENTO)
+
+**usuario-service** (base path: `/users`)
+
+- GET `/users`
+  - Descripción: Devuelve la lista de usuarios activos.
+  - Response 200: Array de `UsuarioResponse`.
+  - Ejemplo response:
+
+```json
+[{"id":1,"name":"Alice","mail":"alice@example.com","active":true}]
+```
+
+- GET `/users/{identificador}`
+  - Descripción: Obtiene un usuario por `id` o por `email` (parámetro `identificador`).
+  - Response 200: `UsuarioResponse`.
+  - Response 404: Error `Usuario no encontrado`.
+  - Ejemplo response:
+
+```json
+{"id":1,"name":"Alice","mail":"alice@example.com","active":true}
+```
+
+- POST `/users`
+  - Descripción: Crea un nuevo usuario.
+  - Request body: `CreateUsuarioRequest` 
+    - Campos relevantes (JSON): `name` (string, requerido), `mail` (string, requerido, email), `contrasena` (string, requerido, min 8, patrón de mayúsculas/minúsculas/dígitos).
+  - Response 201: `UsuarioResponse` (usuario creado).
+  - Response 400: Validación fallida.
+  - Response 409: Usuario ya existe (por email) — lanzado por la capa de servicio si aplica.
+  - Ejemplo request:
+
+```json
+{"name":"Alice","mail":"alice@example.com","contrasena":"Secret123"}
+```
+
+- PUT `/users/{id}`
+  - Descripción: Reemplazo completo del usuario con `UpdateUsuarioRequest`.
+  - Request body: `UpdateUsuarioRequest` (nombre, email, contrasena, activo).
+  - Response 200: `UsuarioResponse` con datos actualizados.
+  - Response 404: Usuario no encontrado.
+
+- PATCH `/users/{id}`
+  - Descripción: Actualización parcial; acepta campos opcionales de `UpdateUsuarioRequest`.
+  - Response 200: `UsuarioResponse` actualizado.
+  - Response 404: Usuario no encontrado.
+
+- DELETE `/users/{id}`
+  - Descripción: Elimina un usuario.
+  - Response 204: Eliminación exitosa (sin body).
+  - Response 404: Usuario no encontrado.
+
+DTOs relacionadas (resumen):
+
+- `CreateUsuarioRequest`:
+  - `name` (string)
+  - `mail` (string)
+  - `contrasena` (string)
+
+- `UpdateUsuarioRequest`:
+  - `nombre` (string, opcional), `email` (string, opcional), `contrasena` (string, opcional), `activo` (boolean, opcional)
+
+- `UsuarioResponse`:
+  - `id` (int), `name` (string), `mail` (string), `active` (boolean)
+
+---
+
+**pedido-service** (base path: `/orders`)
+
+- POST `/orders`
+  - Descripción: Crea una orden. El servicio espera un `OrderDto` sin `id`, `state` ni `active` (estos son gestionados por el servicio).
+  - Request body: `OrderDto` (name, description, idUser).
+  - Response 201: `OrderDto` creado con `id`, `state` inicial y `active=true`. Además se establece header `Location: /orders/{id}`.
+  - Response 400: Validación fallida.
+  - Ejemplo request:
+
+```json
+{"name":"Pedido 1","description":"Descripción","idUser":2}
+```
+
+  - Ejemplo response (201):
+
+```json
+{"id":10,"name":"Pedido 1","description":"Descripción","idUser":2,"state":"PROCESSING","active":true}
+```
+
+- GET `/orders`
+  - Descripción: Lista órdenes activas.
+  - Response 200: Array de `OrderDto`.
+  - Parámetros opcionales: `userId` (query) para filtrar por usuario.
+
+- GET `/orders/{id}`
+  - Descripción: Obtiene una orden por `id`.
+  - Response 200: `OrderDto`.
+  - Response 404: Orden no encontrada.
+
+- GET `/orders/{id}/user`
+  - Descripción: Obtiene la orden enriquecida con información de usuario.
+  - Response 200: `OrderWithUserDto` (contiene campos de `OrderDto` + `user` con estructura `UserResponse`).
+  - Ejemplo response:
+
+```json
+{
+  "id":10,
+  "name":"Pedido 1",
+  "description":"Descripción",
+  "idUser":2,
+  "state":"PROCESSING",
+  "active":true,
+  "user":{ "id":2,"name":"Bob","mail":"bob@example.com","active":true }
+}
+```
+
+- GET `/orders/user/{userId}`
+  - Descripción: Lista órdenes por `idUser` (activas).
+  - Response 200: Array de `OrderDto`.
+
+- GET `/orders/all`
+  - Descripción: Endpoint administrativo que devuelve todas las órdenes (incluye inactivas).
+  - Response 200: Array de `OrderDto`.
+
+- PATCH `/orders/{id}`
+  - Descripción: Cambia el estado de la orden. Espera `OrderStateUpdateDto` con el campo `state`.
+  - Request body: `OrderStateUpdateDto` { "state": "PROCESSING|TRAVELING_TO_WAREHOUSE|...|DELIVERED|CANCELED" }
+  - Response 200: `OrderDto` actualizado.
+  - Response 400: Validación (p.ej. estado nulo o transición inválida manejada por la lógica de negocio).
+  - Response 404: Orden no encontrada.
+
+- DELETE `/orders/{id}`
+  - Descripción: Elimina (soft-delete) una orden por `id`. Implementación actual marca `active=false` en lugar de borrar físicamente.
+  - Response 204: Eliminación exitosa (sin body).
+  - Response 404: Orden no encontrada.
+
+DTOs relacionadas (resumen):
+
+- `OrderDto`:
+  - `id` (int, read-only), `name` (string), `description` (string), `idUser` (int), `state` (enum, read-only), `active` (boolean, read-only)
+
+- `OrderWithUserDto`:
+  - Igual a `OrderDto` + `user` (estructura `UserResponse` / `UserResponse` utilizada por mensajería)
+
+- `OrderStateUpdateDto`:
+  - `state` (enum `State`) — valores permitidos: `PROCESSING`, `TRAVELING_TO_WAREHOUSE`, `IN_WAREHOUSE`, `TRAVELING_TO_YOUR_HOUSE`, `ON_THE_STREET`, `DELIVERED`, `CANCELED`
+
+---
+
 ## 2. Visión General de la Arquitectura Actual
 
 ```
